@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Sector } from "recharts";
 
 /* ================== Config ================== */
-const API_BASE = import.meta?.env?.VITE_API_BASE || "http://localhost:5001/api";
+const API_BASE = import.meta?.env?.VITE_API_BASE || "https://clarus.azurewebsites.net/api";
 const DEFAULT_SHEET = "bCAS (Q4 Adj)";
 
 /* ================== Helpers ================== */

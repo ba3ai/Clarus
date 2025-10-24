@@ -7,7 +7,7 @@ const USER_TYPES = [
   { value: "groupadmin", label: "Group Admin" },
 ];
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://clarus.azurewebsites.net";
 
 export default function AddUser() {
   const [form, setForm] = useState({ name: "", email: "", user_type: USER_TYPES[0].value });

@@ -1,7 +1,7 @@
 // src/components/InvestorPersonalForm.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://clarus.azurewebsites.net";
 const GET_ME_URL = `${API_BASE}/auth/me`;               // <-- must exist on your backend
 const SAVE_PROFILE_URL = `${API_BASE}/auth/profile`;    // <-- JSON profile update
 const AVATAR_URL = `${API_BASE}/auth/profile/avatar`;   // <-- multipart avatar upload

@@ -21,7 +21,7 @@ const AllUsers = () => {
         let token = localStorage.getItem("accessToken");
         if (!token) throw new Error("Missing access token");
 
-        let res = await fetch("http://localhost:5001/admin/users", {
+        let res = await fetch("https://clarus.azurewebsites.net/admin/users", {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -33,7 +33,7 @@ const AllUsers = () => {
           if (!token) throw new Error("Session expired. Please log in again.");
 
           // Retry original request with new token
-          res = await fetch("http://localhost:5001/admin/users", {
+          res = await fetch("https://clarus.azurewebsites.net/admin/users", {
             headers: {
               Authorization: `Bearer ${token}`,
             },

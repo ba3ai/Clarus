@@ -5,7 +5,7 @@ import { jwtDecode } from "jwt-decode";
 import { AuthContext } from "../context/AuthContext";
 
 // Use env for backend base URL (create .env with VITE_API_BASE=http://127.0.0.1:5001)
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://clarus.azurewebsites.net";
 
 export default function Login() {
   const navigate = useNavigate();
