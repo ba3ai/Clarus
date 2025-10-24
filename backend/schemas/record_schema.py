@@ -1,0 +1,1 @@
+# Investment record schema
