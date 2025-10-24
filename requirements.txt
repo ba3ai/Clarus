@@ -98,3 +98,4 @@ APScheduler==3.11.0
 intuit-oauth
 python-quickbooks
 yfinance
+gunicorn
