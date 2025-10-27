@@ -181,7 +181,6 @@ function PreviewModal({ open, onClose, file, scope, fetchBlob, onDownload }) {
         const blob = await fetchBlob(file);
         if (cancelled) return;
 
-        // Prefer server-provided type; fall back to extension guess.
         const t = blob?.type || "";
         setMime(t);
         createdUrl = URL.createObjectURL(blob);
@@ -260,15 +259,15 @@ export default function Documnest(){
   const [sortMode, setSortMode] = useState('az');
 
   const [expanded, setExpanded] = useState(new Set());
-  const [menuFor, setMenuFor] = useState(null);         // node id
-  const [menuAnchor, setMenuAnchor] = useState(null);   // DOMRect of button
+  const [menuFor, setMenuFor] = useState(null);
+  const [menuAnchor, setMenuAnchor] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [treeDirect, setTreeDirect] = useState([]);
-  const [treeShared, setTreeShared] = useState([]);     // derived from /api/documents
+  const [treeShared, setTreeShared] = useState([]);
   const [authError, setAuthError] = useState("");
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [pendingAction, setPendingAction] = useState(null); // { type: 'move'|'copy', node }
+  const [pendingAction, setPendingAction] = useState(null);
 
   const [currentFolder, setCurrentFolder] = useState({ id: null, name: "Root", path: [{ id:null, name:"Root" }] });
 
@@ -314,7 +313,6 @@ export default function Documnest(){
       const data = normalizeNodes(raw || []);
       setTreeDirect(data);
     } else {
-      // Shared docs are a flat list from /api/documents → map to pseudo-tree at Root
       const j = await docsJSON("");
       const docs = Array.isArray(j.documents) ? j.documents : [];
       const nodes = docs.map(d => ({
@@ -447,12 +445,6 @@ export default function Documnest(){
   }
 
   // —— UI helpers
-  function uiCreateFolder(){
-    const name = window.prompt('New folder name');
-    if(!name) return;
-    handleCreateFolder(currentFolder.id, name).catch(err => alert(String(err?.message || err)));
-  }
-  function onBrowse(){ document.getElementById("file-picker-root").click(); }
   function onPickedRoot(e){
     if(e.target.files?.length){
       handleUpload(e.target.files, currentFolder.id).catch(err => alert(String(err?.message || err)));
@@ -532,7 +524,7 @@ export default function Documnest(){
   return (
     <div className="space-y-4">
       {/* Tabs */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button onClick={()=>setScope('direct')} className={cx('rounded-xl border px-4 py-2 text-sm font-medium', scope==='direct' ? 'border-sky-300 bg-white text-slate-900 shadow-sm' : 'border-slate-300 bg-white/70 text-slate-600 hover:bg-white')}>
           My Files <span className={cx('ml-2 rounded-full px-2 text-xs', scope==='direct'?'bg-sky-50 text-sky-700 ring-1 ring-sky-200':'bg-slate-100 text-slate-600')}>{counts.direct}</span>
         </button>
@@ -543,7 +535,7 @@ export default function Documnest(){
 
       {/* Breadcrumb + Toolbar */}
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
           {/* Breadcrumb */}
           <div className="flex items-center flex-wrap gap-1 text-sm">
             {currentFolder.path.map((c, i) => (
@@ -557,42 +549,60 @@ export default function Documnest(){
           </div>
 
           {/* Search + Sort + Actions */}
-          <div className="flex items-center gap-2">
-            <input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search..." className="w-64 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-200" />
-            <label className="text-sm text-slate-600">Sort:</label>
-            <select value={sortMode} onChange={(e)=>setSortMode(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" title="Sort order">
-              {scope==='shared' ? (
-                <>
-                  <option value="az">A → Z (Name)</option>
-                  <option value="za">Z → A (Name)</option>
-                  <option value="dateAsc">Date ↑ (Old → New)</option>
-                  <option value="dateDesc">Date ↓ (New → Old)</option>
-                </>
-              ) : (
-                <>
-                  <option value="az">A → Z (Name)</option>
-                  <option value="za">Z → A (Name)</option>
-                  <option value="numAsc">1 → 9 (Leading Number)</option>
-                  <option value="numDesc">9 → 1 (Leading Number)</option>
-                  <option value="dateAsc">Date ↑ (Old → New)</option>
-                  <option value="dateDesc">Date ↓ (New → Old)</option>
-                </>
-              )}
-            </select>
+          <div className="grid w-full grid-cols-1 gap-2 md:w-auto md:auto-cols-max md:grid-flow-col md:items-center">
+            <input
+              value={query}
+              onChange={(e)=>setQuery(e.target.value)}
+              placeholder="Search..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            />
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-600">Sort:</label>
+              <select value={sortMode} onChange={(e)=>setSortMode(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                {scope==='shared' ? (
+                  <>
+                    <option value="az">A → Z (Name)</option>
+                    <option value="za">Z → A (Name)</option>
+                    <option value="dateAsc">Date ↑ (Old → New)</option>
+                    <option value="dateDesc">Date ↓ (New → Old)</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="az">A → Z (Name)</option>
+                    <option value="za">Z → A (Name)</option>
+                    <option value="numAsc">1 → 9 (Leading Number)</option>
+                    <option value="numDesc">9 → 1 (Leading Number)</option>
+                    <option value="dateAsc">Date ↑ (Old → New)</option>
+                    <option value="dateDesc">Date ↓ (New → Old)</option>
+                  </>
+                )}
+              </select>
+            </div>
 
-            {/* For SHARED scope we hide creation/upload controls */}
+            {/* Creation / upload controls (hidden on shared) */}
             {scope === 'direct' && (
-              <>
-                <button onClick={()=>{ const name = window.prompt('New folder name'); if(!name) return; handleCreateFolder(currentFolder.id, name).catch(err=>alert(String(err?.message||err))); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">New Folder</button>
-                <button onClick={()=>document.getElementById("file-picker-root").click()} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Upload</button>
-                <input id="file-picker-root" type="file" multiple className="hidden" onChange={(e)=>{ if(e.target.files?.length){ handleUpload(e.target.files, currentFolder.id).catch(err=>alert(String(err?.message||err))); e.target.value=''; }}}/>
-              </>
+              <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                <button
+                  onClick={()=>{ const name = window.prompt('New folder name'); if(!name) return; handleCreateFolder(currentFolder.id, name).catch(err=>alert(String(err?.message||err))); }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  New Folder
+                </button>
+                <button
+                  onClick={()=>document.getElementById("file-picker-root").click()}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Upload
+                </button>
+                <input id="file-picker-root" type="file" multiple className="hidden" onChange={onPickedRoot}/>
+              </div>
             )}
           </div>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
+        {/* ===================== Responsive content ===================== */}
+        {/* Desktop/tablet table */}
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full table-fixed">
             <thead>
               <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -611,7 +621,11 @@ export default function Documnest(){
                     <div className="flex items-center gap-2">
                       {node.type==='folder' ? (
                         <button onClick={async ()=>{ await ensureLoaded(node); toggleFolder(node.id); }} className="mr-1 text-slate-500 hover:text-slate-700" aria-label="Toggle folder">
-                          {expanded.has(node.id) ? (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>) : (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>)}
+                          {expanded.has(node.id) ? (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                          )}
                         </button>
                       ) : <span className="w-4"/>}
                       <div style={{ paddingLeft: `${node.depth * 16 || 0}px` }} className="flex items-center gap-2">
@@ -640,7 +654,6 @@ export default function Documnest(){
                     </button>
                     {(menuFor === node.id && menuAnchor) && (
                       <PortalMenu anchorRect={menuAnchor} onClose={()=>setMenuFor(null)}>
-                        {/* Shared tab is read-only */}
                         {scope==='shared' ? (
                           <>
                             <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); setPreviewNode(node); setPreviewOpen(true); }}>Preview</button>
@@ -666,15 +679,70 @@ export default function Documnest(){
           </table>
         </div>
 
+        {/* Mobile card list */}
+        <div className="md:hidden">
+          {visibleRows.length === 0 ? (
+            <div className="px-4 py-10 text-center text-slate-500">{loading? 'Loading…' : 'Nothing to display'}</div>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {visibleRows.map(node => (
+                <li key={node.id} className="px-4 py-3">
+                  <div className="flex items-start">
+                    <div className="mt-1 mr-3"><FileIcon type={node.type} /></div>
+                    <div className="flex-1 min-w-0">
+                      {node.type === 'folder' ? (
+                        <button onClick={() => enterFolder(node)} className="block w-full text-left truncate font-medium text-slate-800 hover:underline">{node.name}</button>
+                      ) : (
+                        <button onClick={()=>{ setPreviewNode(node); setPreviewOpen(true); }} className="block w-full text-left truncate font-medium text-slate-800 hover:underline">
+                          {node.name}
+                        </button>
+                      )}
+                      <div className="mt-0.5 text-xs text-slate-500">{toISO(node.dateUploaded) || '—'}</div>
+                    </div>
+                    <div className="ml-2">
+                      <button
+                        onClick={(e)=>{ e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setMenuAnchor(rect); setMenuFor(node.id === menuFor ? null : node.id); }}
+                        className="rounded-md p-1 text-slate-500 hover:bg-slate-100" aria-label="Row menu"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  {(menuFor === node.id && menuAnchor) && (
+                    <PortalMenu anchorRect={menuAnchor} onClose={()=>setMenuFor(null)}>
+                      {scope==='shared' ? (
+                        <>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); setPreviewNode(node); setPreviewOpen(true); }}>Preview</button>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); handleDownload(node).catch(err=>alert(String(err?.message||err))); }}>Download</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); setPreviewNode(node); setPreviewOpen(true); }}>Preview</button>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); handleRename(node).catch(err=>alert(String(err?.message||err))); }}>Rename</button>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); handleDownload(node).catch(err=>alert(String(err?.message||err))); }}>Download</button>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); setPendingAction({ type:'copy', node }); setPickerVisible(true); }}>Copy…</button>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={()=>{ setMenuFor(null); setPendingAction({ type:'move', node }); setPickerVisible(true); }}>Move to…</button>
+                          <hr className="my-1"/>
+                          <button className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50" onClick={()=>{ setMenuFor(null); handleDelete(node).catch(err=>alert(String(err?.message||err))); }}>Delete</button>
+                        </>
+                      )}
+                    </PortalMenu>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {/* Dropzone (only for My Files) */}
         {scope === 'direct' && (
           <div
             onDragOver={(e)=>{e.preventDefault(); setIsDragging(true);}}
             onDragLeave={()=>setIsDragging(false)}
             onDrop={(e)=>{e.preventDefault(); setIsDragging(false); if(e.dataTransfer?.files?.length){ handleUpload(e.dataTransfer.files, currentFolder.id).catch(err=>alert(String(err?.message||err))); }}}
-            className={cx('m-4 rounded-xl border-2 border-dashed p-10 text-center', isDragging ? 'border-sky-300 bg-sky-50' : 'border-slate-300 text-slate-600')}
+            className={cx('m-4 rounded-xl border-2 border-dashed p-6 text-center sm:p-10', isDragging ? 'border-sky-300 bg-sky-50' : 'border-slate-300 text-slate-600')}
           >
-            <div className="mx-auto mb-3 flex h-16 w-14 items-center justify-center rounded-md bg-slate-100 text-slate-700">ZIP</div>
+            <div className="mx-auto mb-3 flex h-12 w-10 items-center justify-center rounded-md bg-slate-100 text-slate-700 sm:h-16 sm:w-14">ZIP</div>
             <div className="space-x-1 text-sm"><span>Drop files here or</span><button onClick={()=>document.getElementById("file-picker-root").click()} className="text-sky-700 underline underline-offset-2">browse</button></div>
             <div className="mt-3 text-xs text-slate-500">Files will upload to: <span className="font-medium">{currentFolder.path.map(p=>p.name).join(" / ")}</span></div>
           </div>

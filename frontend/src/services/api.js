@@ -1,7 +1,7 @@
 // frontend/src/services/api.js
 import axios from "axios";
 
-const API_BASE_URL = "https://clarus.azurewebsites.net"; // keep as-is for dev
+const API_BASE_URL = "http://localhost:5001"; // keep as-is for dev
 
 const api = axios.create({
   baseURL: API_BASE_URL,

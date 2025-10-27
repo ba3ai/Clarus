@@ -1,6 +1,8 @@
 // src/components/Statements.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
+/* ---------- small helpers ---------- */
 function cx(...xs) { return xs.filter(Boolean).join(" "); }
 function toCurrency(n) {
   if (n == null || Number.isNaN(n)) return "—";
@@ -29,6 +31,7 @@ function downloadCSV(filename, rows) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ---------- component ---------- */
 export default function Statements({ profiles = [] }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -47,7 +50,13 @@ export default function Statements({ profiles = [] }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailErr, setDetailErr] = useState("");
 
-  // Quarter controls (default to current)
+  // Per-row actions menu
+  const [openActionId, setOpenActionId] = useState(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+  const actionsTriggerRef = useRef(null);
+  const floatingMenuRef = useRef(null); // keep clicks inside from closing
+
+  // Quarter controls
   const today = new Date();
   const defaultYear = today.getFullYear();
   const defaultQuarter = Math.floor(today.getMonth() / 3) + 1;
@@ -56,7 +65,7 @@ export default function Statements({ profiles = [] }) {
   const [entityName, setEntityName] = useState("Elpis Opportunity Fund LP");
   const [genBusy, setGenBusy] = useState(false);
 
-  // Visible columns
+  // Visible columns (for desktop table)
   const [visible, setVisible] = useState({
     name:      true,
     investor:  true,
@@ -66,14 +75,39 @@ export default function Statements({ profiles = [] }) {
     amountDue: true,
     paidDate:  true,
     download:  true,
-    view:      true,
+    actions:   true,
   });
 
-  const menuRef = useRef(null);
+  const columnsMenuRef = useRef(null);
+
+  // matchMedia → switch to cards on small screens
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia?.("(max-width: 767px)")?.matches ?? false);
   useEffect(() => {
-    const onClick = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowColumnsMenu(false); };
+    const mq = window.matchMedia?.("(max-width: 767px)");
+    const handler = (e) => setIsMobile(e.matches);
+    mq?.addEventListener?.("change", handler);
+    return () => mq?.removeEventListener?.("change", handler);
+  }, []);
+
+  useEffect(() => {
+    const onClick = (e) => {
+      // ignore clicks inside the floating menu
+      if (floatingMenuRef.current && floatingMenuRef.current.contains(e.target)) return;
+      if (columnsMenuRef.current && !columnsMenuRef.current.contains(e.target)) setShowColumnsMenu(false);
+      // close action menu if clicking anywhere outside triggers
+      if (actionsTriggerRef.current && !actionsTriggerRef.current.contains(e.target)) setOpenActionId(null);
+    };
+    const onScrollOrResize = () => setOpenActionId(null);
+
     document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
   }, []);
 
   async function fetchRows() {
@@ -161,17 +195,11 @@ export default function Statements({ profiles = [] }) {
     setDetailErr("");
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/statements/${id}`, {
-        headers: { Accept: "application/json" },
-      });
-
-      // If server returns non-2xx, capture the text (often HTML error page) for diagnostics
+      const res = await fetch(`/api/statements/${id}`, { headers: { Accept: "application/json" } });
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(`GET /api/statements/${id} -> ${res.status}\n${txt.slice(0, 400)}`);
       }
-
-      // Must be JSON; otherwise the preview would fail (e.g., server sent HTML/PDF)
       const ct = res.headers.get("content-type") || "";
       if (!ct.toLowerCase().includes("application/json")) {
         const txt = await res.text();
@@ -180,7 +208,6 @@ export default function Statements({ profiles = [] }) {
           `First 400 chars of response:\n${txt.slice(0, 400)}`
         );
       }
-
       const data = await res.json();
       setDetail(data);
     } catch (e) {
@@ -196,6 +223,26 @@ export default function Statements({ profiles = [] }) {
     setDetailErr("");
   }
 
+  async function onDeleteStatement(row) {
+    if (!row?.id) return;
+    const go = window.confirm(`Delete this statement?\n\n${row.name}\nInvestor: ${row.investor}\nEntity: ${row.entity}`);
+    if (!go) return;
+
+    try {
+      const res = await fetch(`/api/statements/${row.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`DELETE /api/statements/${row.id} -> ${res.status}${t ? `\n${t}` : ""}`);
+      }
+      setRows(prev => prev.filter(r => r.id !== row.id));
+    } catch (e) {
+      alert(`Failed to delete: ${e.message || e}`);
+    } finally {
+      setOpenActionId(null);
+    }
+  }
+
+  /* ---------- UI ---------- */
   return (
     <div className="space-y-4">
       {/* Top controls */}
@@ -295,13 +342,13 @@ export default function Statements({ profiles = [] }) {
 
       {/* Search + actions */}
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by anything"
-            className="w-72 max-w-[60%] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+            className="w-72 max-w-[60%] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
           />
 
           <div className="flex items-center gap-2">
@@ -314,7 +361,8 @@ export default function Statements({ profiles = [] }) {
               Export
             </button>
 
-            <div className="relative" ref={menuRef}>
+            {/* Columns menu hidden on mobile (card layout handles content) */}
+            <div className="relative hidden md:block" ref={columnsMenuRef}>
               <button
                 onClick={() => setShowColumnsMenu(v => !v)}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -331,6 +379,7 @@ export default function Statements({ profiles = [] }) {
                       <span className="capitalize text-slate-700">
                         {key === "dueDate" ? "Due Date"
                           : key === "paidDate" ? "Paid Date"
+                          : key === "actions" ? "Actions"
                           : key.charAt(0).toUpperCase() + key.slice(1)}
                       </span>
                       <input type="checkbox" className="h-4 w-4" checked={visible[key]} onChange={() => colToggle(key)} />
@@ -342,8 +391,8 @@ export default function Statements({ profiles = [] }) {
           </div>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
+        {/* Desktop table */}
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full table-fixed">
             <thead>
               <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -368,7 +417,7 @@ export default function Statements({ profiles = [] }) {
                 {visible.amountDue && <th className="w-[10%] px-4 py-3">Amount Due</th>}
                 {visible.paidDate && <th className="w-[10%] px-4 py-3">Paid Date</th>}
                 {visible.download && <th className="w-[7%] px-4 py-3">PDF</th>}
-                {visible.view && <th className="w-[7%] px-4 py-3">View</th>}
+                {visible.actions && <th className="w-[7%] px-4 py-3">Actions</th>}
               </tr>
             </thead>
 
@@ -413,21 +462,153 @@ export default function Statements({ profiles = [] }) {
                     </td>
                   )}
 
-                  {visible.view && (
-                    <td className="px-4 py-3">
+                  {visible.actions && (
+                    <td className="px-4 py-3" ref={actionsTriggerRef}>
                       <button
-                        onClick={() => openDetail(row.id)}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-                        title="View statement values"
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setMenuPos({ top: r.bottom + 8, left: Math.max(8, r.right - 144) }); // 144px menu width
+                          setOpenActionId((cur) => (cur === row.id ? null : row.id));
+                        }}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                        title="Actions"
                       >
-                        View
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                          <circle cx="12" cy="5" r="2" />
+                          <circle cx="12" cy="12" r="2" />
+                          <circle cx="12" cy="19" r="2" />
+                        </svg>
                       </button>
+
+                      {openActionId === row.id &&
+                        createPortal(
+                          <div
+                            ref={floatingMenuRef}
+                            style={{ position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 1000 }}
+                            className="w-36 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+                          >
+                            <button
+                              onClick={() => { setOpenActionId(null); openDetail(row.id); }}
+                              className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                            >
+                              View
+                            </button>
+                            <button
+                              onClick={() => onDeleteStatement(row)}
+                              className="block w-full px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50"
+                            >
+                              Delete
+                            </button>
+                          </div>,
+                          document.body
+                        )
+                      }
                     </td>
                   )}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile cards */}
+        <div className="md:hidden">
+          {loading && <div className="px-4 py-8 text-center text-slate-500">Loading…</div>}
+          {!!err && !loading && <div className="px-4 py-8 text-center text-rose-600">{err}</div>}
+          {!loading && !err && filtered.length === 0 && (
+            <div className="px-4 py-12 text-center text-slate-500">Nothing to display</div>
+          )}
+
+          <ul className="divide-y divide-slate-100">
+            {filtered.map(row => (
+              <li key={row.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">{row.name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{row.investor} • {row.entity}</div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {row.pdfAvailable ? (
+                      <a
+                        href={`/api/statements/${row.id}/pdf`}
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        PDF
+                      </a>
+                    ) : null}
+
+                    <button
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setMenuPos({ top: r.bottom + 8, left: Math.max(8, r.right - 144) });
+                        setOpenActionId((cur) => (cur === row.id ? null : row.id));
+                      }}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                      title="Actions"
+                      ref={actionsTriggerRef}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="5" r="2" />
+                        <circle cx="12" cy="12" r="2" />
+                        <circle cx="12" cy="19" r="2" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs text-slate-500">Due</div>
+                    <div className="text-slate-800">{toISODate(row.dueDate) || "—"}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs text-slate-500">Amount</div>
+                    <div className="tabular-nums text-slate-800">{toCurrency(row.amountDue)}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs text-slate-500">Status</div>
+                    <div className={cx(
+                      "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+                      String(row.status).toLowerCase() === "paid"
+                        ? "bg-green-50 text-green-700 ring-1 ring-green-200"
+                        : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                    )}>
+                      {row.status}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="text-xs text-slate-500">Paid</div>
+                    <div className="text-slate-800">{toISODate(row.paidDate) || "—"}</div>
+                  </div>
+                </div>
+
+                {openActionId === row.id &&
+                  createPortal(
+                    <div
+                      ref={floatingMenuRef}
+                      style={{ position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 1000 }}
+                      className="w-36 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+                    >
+                      <button
+                        onClick={() => { setOpenActionId(null); openDetail(row.id); }}
+                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => onDeleteStatement(row)}
+                        className="block w-full px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50"
+                      >
+                        Delete
+                      </button>
+                    </div>,
+                    document.body
+                  )
+                }
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
 
@@ -456,7 +637,7 @@ export default function Statements({ profiles = [] }) {
             <div className="p-5">
               {detailLoading && <div className="py-10 text-center text-slate-500">Loading…</div>}
               {!!detailErr && (
-                <div className="py-10 text-center text-rose-600 whitespace-pre-wrap">
+                <div className="whitespace-pre-wrap py-10 text-center text-rose-600">
                   {detailErr}
                 </div>
               )}

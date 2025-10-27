@@ -1,6 +1,7 @@
-# statements_routes.py
+# backend/routes/statements_routes.py
 from __future__ import annotations
 
+import os
 from datetime import date, datetime
 from flask import Blueprint, jsonify, send_file, request, abort
 from backend.extensions import db
@@ -167,6 +168,38 @@ def get_statement_detail(statement_id: int):
 
     payload = _payload_from_stmt(stmt)
     return jsonify(payload)
+
+
+@statements_bp.get("/<int:statement_id>/view")
+def get_statement_view_alias(statement_id: int):
+    """
+    GET /api/statements/<id>/view
+    Convenience alias for the frontend "View" action.
+    """
+    return get_statement_detail(statement_id)
+
+
+@statements_bp.delete("/<int:statement_id>")
+def delete_statement(statement_id: int):
+    """
+    DELETE /api/statements/<id>
+    Removes the statement and (best-effort) deletes the generated PDF file.
+    """
+    stmt = Statement.query.get(statement_id)
+    if not stmt:
+        abort(404, description="Statement not found")
+
+    # Best-effort cleanup of the generated PDF
+    try:
+        if stmt.pdf_path and os.path.isfile(stmt.pdf_path):
+            os.remove(stmt.pdf_path)
+    except Exception:
+        # Do not block delete on filesystem errors
+        pass
+
+    db.session.delete(stmt)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @statements_bp.post("/generate")

@@ -121,7 +121,7 @@ const App = () => {
       </Routes>
 
       {/* Global chatbot (renders once, overlays all dashboards) */}
-      {showChat && <ChatWidget apiBase="/api" />}
+      {showChat && <ChatWidget ttsDefaultEnabled={false} autoSendOnFinal defaultOpen={true} apiBase="/api" />}
     </>
   );
 };

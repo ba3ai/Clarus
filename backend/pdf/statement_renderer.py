@@ -293,12 +293,12 @@ def render_investor_statement_pdf(
          _money(getattr(stmt, "incentive_fees", 0)), _money(ytd.get("incentive_fees", 0))],
 
         ["(Management Fees)", *sym("(Management Fees)"),
-        _money(getattr(stmt, "management_fees", 0)),           # was _money(-float(...))
-        _money(ytd.get("management_fees", 0))],                # was _money(-float(...))
+         _money(getattr(stmt, "management_fees", 0)),
+         _money(ytd.get("management_fees", 0))],
 
         ["(Operating Expenses)", *sym("(Operating Expenses)"),
-        _money(getattr(stmt, "operating_expenses", 0)),        # was _money(-float(...))
-        _money(ytd.get("operating_expenses", 0))],           # was _money(-float(...))
+         _money(getattr(stmt, "operating_expenses", 0)),
+         _money(ytd.get("operating_expenses", 0))],
 
         ["(Adjustment)", *sym("(Adjustment)"),
          _money(getattr(stmt, "adjustment", 0)), _money(ytd.get("adjustment", 0))],
@@ -318,15 +318,19 @@ def render_investor_statement_pdf(
 
     table = Table(rows, colWidths=[label_w, sym_w, cur_w, sym_w, ytd_w])
 
-    # Find row indices we want to stylize like the sample
-    idx_begin   = 0
-    idx_cash    = 3
-    idx_blank   = 4
-    idx_heading = 5
-    idx_opx  = len(rows) - 4  # "(Adjustment)"
-    idx_totalni = len(rows) - 2  # "Total net income/(loss)"
-    idx_endbal  = len(rows) - 3  # "Ending balance"
-    idx_roi     = len(rows) - 1 if rows[-1][0] == "ROI" else None
+    # ---------- robust index lookup by label (avoids None crashes) ----------
+    label_to_index = {r[0]: i for i, r in enumerate(rows)}
+    def idx(label: str) -> Optional[int]:
+        return label_to_index.get(label)
+
+    idx_begin    = idx("Beginning balance")
+    idx_cash     = idx("Total cash/deemed\nflows")
+    idx_blank    = rows.index(["", "", "", "", ""]) if ["", "", "", "", ""] in rows else None
+    idx_heading  = idx("Net Income / (Loss):")
+    idx_adj      = idx("(Adjustment)")
+    idx_totalni  = idx("Total net income/\n(loss)")
+    idx_endbal   = idx("Ending balance")
+    idx_roi      = idx("ROI")
 
     # Base style
     ts = TableStyle([
@@ -342,23 +346,28 @@ def render_investor_statement_pdf(
         ("LINEBELOW", (0, -1), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
     ])
 
-    # Bold labels like the sample
+    # Bold rows (only when present)
     for i in (idx_begin, idx_heading, idx_totalni, idx_endbal, idx_roi):
-        ts.add("FONTNAME", (0, i), (-1, i), "Helvetica-Bold")
+        if i is not None:
+            ts.add("FONTNAME", (0, i), (-1, i), "Helvetica-Bold")
 
-    # Italic for the two subtotal labels (like sample)
-    ts.add("FONTNAME", (0, idx_cash), (0, idx_cash), "Helvetica-Oblique")
-    ts.add("FONTNAME", (0, idx_totalni), (0, idx_totalni), "Helvetica-Oblique")
+    # Italic for subtotals
+    if idx_cash is not None:
+        ts.add("FONTNAME", (0, idx_cash), (0, idx_cash), "Helvetica-Oblique")
+    if idx_totalni is not None:
+        ts.add("FONTNAME", (0, idx_totalni), (0, idx_totalni), "Helvetica-Oblique")
 
-    # Thin rules where the sample shows them:
-    # 1) a fine rule under the "Total cash/deemed flows" row across numeric cols only
-    ts.add("LINEABOVE", (2, idx_cash), (4, idx_cash), 0.6, colors.HexColor("#c7cdd4"))
-    # 2) a fine rule above "Total net income/(loss)" across numeric cols only
-    ts.add("LINEABOVE", (2, idx_opx), (4, idx_opx), 0.6, colors.HexColor("#c7cdd4"))
-    
-    # Some breathing room before the “Net Income / (Loss):” heading
-    ts.add("BOTTOMPADDING", (0, idx_blank), (-1, idx_blank), 10)
-    ts.add("TOPPADDING", (0, idx_heading), (-1, idx_heading), 4)
+    # Thin rules where the sample shows them (only when rows exist)
+    if idx_cash is not None:
+        ts.add("LINEABOVE", (2, idx_cash), (4, idx_cash), 0.6, colors.HexColor("#c7cdd4"))
+    if idx_adj is not None:
+        ts.add("LINEABOVE", (2, idx_adj), (4, idx_adj), 0.6, colors.HexColor("#c7cdd4"))
+
+    # Spacing around the section header
+    if idx_blank is not None:
+        ts.add("BOTTOMPADDING", (0, idx_blank), (-1, idx_blank), 10)
+    if idx_heading is not None:
+        ts.add("TOPPADDING", (0, idx_heading), (-1, idx_heading), 4)
 
     table.setStyle(ts)
 

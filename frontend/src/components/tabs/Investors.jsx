@@ -15,7 +15,7 @@ function Investors() {
 
   async function findEndpoint() {
     const candidates = [
-      "https://clarus.azurewebsites.net/api/invitations?status=accepted",
+      "http://localhost:5001/api/invitations?status=accepted",
     ];
     for (const url of candidates) {
       try {

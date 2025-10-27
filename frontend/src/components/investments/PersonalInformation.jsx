@@ -1,19 +1,32 @@
-// src/components/InvestorPersonalForm.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "https://clarus.azurewebsites.net";
-const GET_ME_URL = `${API_BASE}/auth/me`;               // <-- must exist on your backend
-const SAVE_PROFILE_URL = `${API_BASE}/auth/profile`;    // <-- JSON profile update
-const AVATAR_URL = `${API_BASE}/auth/profile/avatar`;   // <-- multipart avatar upload
+/**
+ * Responsive Personal Information form
+ * - Mobile first: single column
+ * - md+ : two columns for main fields
+ * - Avatar block stays compact and aligns nicely at all sizes
+ *
+ * ENV:
+ *   VITE_API_BASE (defaults to http://localhost:5001)
+ *   Expects these endpoints to exist on your backend:
+ *     GET  /auth/me
+ *     PUT  /auth/profile               (JSON)
+ *     PUT  /auth/profile/avatar        (multipart)
+ */
 
-export default function InvestorPersonalForm({ onSaved }) {
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+const GET_ME_URL = `${API_BASE}/auth/me`;
+const SAVE_PROFILE_URL = `${API_BASE}/auth/profile`;
+const AVATAR_URL = `${API_BASE}/auth/profile/avatar`;
+
+export default function PersonalInformation({ onSaved }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [loaded, setLoaded] = useState(false);
 
   const [avatarFile, setAvatarFile] = useState(null);
-  const [avatarUrl, setAvatarUrl] = useState(""); // from server
+  const [avatarUrl, setAvatarUrl] = useState("");
 
   const [form, setForm] = useState({
     first_name: "",
@@ -44,8 +57,13 @@ export default function InvestorPersonalForm({ onSaved }) {
     return (f + l || "AI").toUpperCase();
   }, [form.first_name, form.last_name]);
 
-  const previewUrl = useMemo(() => (avatarFile ? URL.createObjectURL(avatarFile) : ""), [avatarFile]);
-  useEffect(() => () => previewUrl && URL.revokeObjectURL(previewUrl), [previewUrl]);
+  const previewUrl = useMemo(
+    () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
+    [avatarFile]
+  );
+  useEffect(() => {
+    return () => previewUrl && URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
 
   // ---------- load current user ----------
   useEffect(() => {
@@ -57,7 +75,9 @@ export default function InvestorPersonalForm({ onSaved }) {
     (async () => {
       setBusy(true);
       try {
-        const r = await fetch(GET_ME_URL, { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetch(GET_ME_URL, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!r.ok) {
           const msg = isJSON(r) ? (await r.json())?.msg : await r.text();
           throw new Error(msg || `Failed to load profile (${r.status})`);
@@ -68,18 +88,18 @@ export default function InvestorPersonalForm({ onSaved }) {
 
         setForm({
           first_name: u.first_name || p.first_name || "",
-          last_name:  u.last_name  || p.last_name  || "",
-          birthdate:  p.birthdate  || "",
-          citizenship:p.citizenship|| "",
-          email:      u.email      || p.email      || "",
-          phone:      u.phone      || p.phone      || "",
-          ssn:        p.ssn        || "",
-          address1:   p.address1 || u.address || "",
-          address2:   p.address2 || "",
-          country:    p.country  || "",
-          city:       p.city     || "",
-          state:      p.state    || "",
-          zip:        p.zip      || "",
+          last_name: u.last_name || p.last_name || "",
+          birthdate: p.birthdate || "",
+          citizenship: p.citizenship || "",
+          email: u.email || p.email || "",
+          phone: u.phone || p.phone || "",
+          ssn: p.ssn || "",
+          address1: p.address1 || u.address || "",
+          address2: p.address2 || "",
+          country: p.country || "",
+          city: p.city || "",
+          state: p.state || "",
+          zip: p.zip || "",
         });
         setAvatarUrl(p.avatar_url || u.avatar_url || "");
         setErr("");
@@ -93,34 +113,59 @@ export default function InvestorPersonalForm({ onSaved }) {
   }, [token]);
 
   // ---------- ui handlers ----------
-  const onChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
-  const startEdit = () => { setErr(""); setEditing(true); };
-  const cancelEdit = () => { setAvatarFile(null); setEditing(false); setErr(""); };
-  const onPickAvatar = (e) => { const f = e.target.files?.[0]; if (f) setAvatarFile(f); };
-  const removeAvatar = () => { setAvatarFile(null); setAvatarUrl(""); };
+  const onChange = (e) =>
+    setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  const startEdit = () => {
+    setErr("");
+    setEditing(true);
+  };
+  const cancelEdit = () => {
+    setAvatarFile(null);
+    setEditing(false);
+    setErr("");
+  };
+  const onPickAvatar = (e) => {
+    const f = e.target.files?.[0];
+    if (f) setAvatarFile(f);
+  };
+  const removeAvatar = () => {
+    setAvatarFile(null);
+    setAvatarUrl("");
+  };
 
   // ---------- submit ----------
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
 
-    // required fields (matches the UI asterisks)
     const required = [
-      "first_name","last_name","birthdate","citizenship","email",
-      "phone","ssn","address1","country","city","state","zip"
+      "first_name",
+      "last_name",
+      "birthdate",
+      "citizenship",
+      "email",
+      "phone",
+      "ssn",
+      "address1",
+      "country",
+      "city",
+      "state",
+      "zip",
     ];
     for (const k of required) {
       if (!String(form[k] || "").trim()) {
-        setErr(`${k.replace("_"," ")} is required`);
+        setErr(`${k.replace("_", " ")} is required`);
         return;
       }
     }
-
-    if (!token) { setErr("Not authenticated."); return; }
+    if (!token) {
+      setErr("Not authenticated.");
+      return;
+    }
 
     setBusy(true);
     try {
-      // 1) save profile JSON
+      // 1) Save JSON profile
       const r1 = await fetch(SAVE_PROFILE_URL, {
         method: "PUT",
         headers: {
@@ -129,17 +174,17 @@ export default function InvestorPersonalForm({ onSaved }) {
         },
         body: JSON.stringify(form),
       });
-
       if (!r1.ok) {
         const msg = isJSON(r1) ? (await r1.json())?.msg : await r1.text();
         throw new Error(msg || `Save failed (${r1.status})`);
       }
 
-      // 2) optional avatar upload (multipart)
+      // 2) Optional avatar upload or removal
       if (avatarFile || avatarUrl === "") {
         const fd = new FormData();
         if (avatarFile) fd.append("avatar", avatarFile, avatarFile.name);
         if (avatarUrl === "") fd.append("remove_avatar", "1");
+
         const r2 = await fetch(AVATAR_URL, {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}` },
@@ -162,10 +207,19 @@ export default function InvestorPersonalForm({ onSaved }) {
     }
   };
 
-  const Field = ({ label, name, required, type="text", placeholder="", disabled=!editing }) => (
+  // Simple input field component
+  const Field = ({
+    label,
+    name,
+    required,
+    type = "text",
+    placeholder = "",
+    disabled = !editing,
+  }) => (
     <div className="space-y-1">
       <label className="block text-sm font-semibold text-gray-700">
-        {label}{required && <span className="text-red-500">*</span>}
+        {label}
+        {required && <span className="text-red-500">*</span>}
       </label>
       <input
         name={name}
@@ -175,52 +229,83 @@ export default function InvestorPersonalForm({ onSaved }) {
         disabled={disabled}
         placeholder={placeholder}
         className={`w-full rounded-lg border px-3 py-2.5 bg-gray-50 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-100
-          ${disabled ? "text-gray-600 border-gray-200" : "border-gray-300"}`}
+          ${
+            disabled ? "text-gray-600 border-gray-200" : "border-gray-300"
+          }`}
       />
     </div>
   );
 
   return (
     <form onSubmit={submit} className="space-y-10">
-      {/* Personal Information */}
+      {/* PERSONAL INFORMATION */}
       <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-start justify-between p-6 border-b">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-6 border-b">
           <h2 className="text-xl font-semibold">Personal Information</h2>
           {!editing ? (
-            <button type="button" onClick={startEdit}
-              className="inline-flex items-center gap-2 rounded-lg border border-sky-300 text-sky-700 px-3 py-1.5 hover:bg-sky-50 disabled:opacity-60"
-              disabled={busy || !loaded}>
+            <button
+              type="button"
+              onClick={startEdit}
+              className="inline-flex items-center gap-2 rounded-lg border border-sky-300 text-sky-700 px-3 py-1.5 hover:bg-sky-50 disabled:opacity-60 self-start sm:self-auto"
+              disabled={busy || !loaded}
+            >
               Edit
             </button>
           ) : (
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={cancelEdit}
+            <div className="flex items-center gap-3 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={cancelEdit}
                 className="rounded-lg border px-3 py-1.5 text-gray-700 hover:bg-gray-50"
-                disabled={busy}>Cancel</button>
-              <button type="submit"
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
                 className="rounded-lg bg-indigo-600 text-white px-4 py-2 hover:brightness-110 disabled:opacity-60"
-                disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+                disabled={busy}
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
             </div>
           )}
         </div>
 
+        {/* Avatar + Fields grid */}
         <div className="p-6">
-          <div className="grid grid-cols-[96px_1fr] gap-6 items-start">
+          {/* On small screens the avatar is on top; on md+ it sits on the left in a 2-col grid */}
+          <div className="grid grid-cols-1 md:grid-cols-[112px_1fr] gap-6 items-start">
             {/* Avatar */}
-            <div className="flex flex-col items-center gap-3">
+            <div className="flex flex-col items-start md:items-center gap-3">
               <div className="relative h-24 w-24 rounded-full bg-teal-500 text-white grid place-items-center text-3xl font-semibold overflow-hidden">
-                {(previewUrl || avatarUrl) ? (
-                  <img src={previewUrl || avatarUrl} alt="Profile" className="h-full w-full object-cover" />
-                ) : initials}
+                {previewUrl || avatarUrl ? (
+                  <img
+                    src={previewUrl || avatarUrl}
+                    alt="Profile"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  initials
+                )}
               </div>
               {editing && (
                 <div className="flex items-center gap-2">
                   <label className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-gray-700 hover:bg-gray-50 cursor-pointer">
-                    <input type="file" accept="image/*" onChange={onPickAvatar} className="hidden" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={onPickAvatar}
+                      className="hidden"
+                    />
                     Change
                   </label>
                   {(previewUrl || avatarUrl) && (
-                    <button type="button" onClick={removeAvatar} className="text-rose-600 hover:underline text-sm">
+                    <button
+                      type="button"
+                      onClick={removeAvatar}
+                      className="text-rose-600 hover:underline text-sm"
+                    >
                       Remove
                     </button>
                   )}
@@ -230,13 +315,49 @@ export default function InvestorPersonalForm({ onSaved }) {
 
             {/* Fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Field label="First Name" name="first_name" required placeholder="Benjamin" />
-              <Field label="Last Name" name="last_name" required placeholder="Jones" />
-              <Field label="Birthdate" name="birthdate" required placeholder="11/02/1968" />
-              <Field label="Citizenship" name="citizenship" required placeholder="United States" />
-              <Field label="Email" name="email" required type="email" placeholder="ben@educounting.com" />
-              <Field label="Phone" name="phone" required placeholder="3177015050" />
-              <Field label="SSN / Tax ID" name="ssn" required placeholder="308-92-2338" />
+              <Field
+                label="First Name"
+                name="first_name"
+                required
+                placeholder="Benjamin"
+              />
+              <Field
+                label="Last Name"
+                name="last_name"
+                required
+                placeholder="Jones"
+              />
+              <Field
+                label="Birthdate"
+                name="birthdate"
+                required
+                placeholder="11/02/1968"
+              />
+              <Field
+                label="Citizenship"
+                name="citizenship"
+                required
+                placeholder="United States"
+              />
+              <Field
+                label="Email"
+                name="email"
+                required
+                type="email"
+                placeholder="ben@educounting.com"
+              />
+              <Field
+                label="Phone"
+                name="phone"
+                required
+                placeholder="3177015050"
+              />
+              <Field
+                label="SSN / Tax ID"
+                name="ssn"
+                required
+                placeholder="308-92-2338"
+              />
               <div className="text-xs text-gray-500 self-end md:col-span-1">
                 SSN / Tax ID is an encrypted attribute
               </div>
@@ -245,21 +366,40 @@ export default function InvestorPersonalForm({ onSaved }) {
         </div>
       </section>
 
-      {/* Residential Address */}
+      {/* RESIDENTIAL ADDRESS */}
       <section className="rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="p-6 border-b">
           <h3 className="text-xl font-semibold">Residential Address</h3>
         </div>
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="md:col-span-2">
-            <Field label="Street Address 1" name="address1" required placeholder="1496 Daylight Dr." />
+            <Field
+              label="Street Address 1"
+              name="address1"
+              required
+              placeholder="1496 Daylight Dr."
+            />
           </div>
           <div className="md:col-span-2">
-            <Field label="Street Address 2 (Optional)" name="address2" placeholder="" />
+            <Field
+              label="Street Address 2 (Optional)"
+              name="address2"
+              placeholder=""
+            />
           </div>
-          <Field label="Country" name="country" required placeholder="United States" />
+          <Field
+            label="Country"
+            name="country"
+            required
+            placeholder="United States"
+          />
           <Field label="City" name="city" required placeholder="Carmel" />
-          <Field label="State / Province" name="state" required placeholder="Indiana" />
+          <Field
+            label="State / Province"
+            name="state"
+            required
+            placeholder="Indiana"
+          />
           <Field label="Zip / Postal Code" name="zip" required placeholder="46280" />
         </div>
       </section>

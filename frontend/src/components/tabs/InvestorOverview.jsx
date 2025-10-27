@@ -523,7 +523,7 @@ export default function InvestorOverview() {
     if (!isYM(cmpFromMonth) || !isYM(cmpToMonth) || cmpMonths.length === 0) return;
     const from = `${cmpFromMonth}-01`;
     const to   = `${cmpToMonth}-01`;
-    setElopLoading(true);
+    setElopLoading(false);
     setElopError("");
     fetch(`/api/portfolio/roi_monthly?sheet=${encodeURIComponent(sheetName)}&start=${from}&end=${to}`)
       .then(r => r.json())

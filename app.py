@@ -40,6 +40,9 @@ from backend.auto_migrations import run_auto_migrations
 from backend.routes.investor_sync_routes import investor_sync_bp
 from backend.routes.statements_routes import statements_bp
 from backend.routes.settings_routes import settings_bp
+from backend.scheduler import start_scheduler
+
+
 mail = Mail()
 
 # ---------- helpers ----------
@@ -476,7 +479,7 @@ def create_app() -> Flask:
 
     # Optional: immediately store latest month on boot (env-gated)
     _startup_sync(app)
-
+    start_scheduler(app, dev_mode=False)
     # Static assets for SPA
     if dist_dir:
         @app.route("/assets/<path:fname>")

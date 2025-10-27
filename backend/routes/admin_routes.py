@@ -90,7 +90,7 @@ def create_invitation():
     db.session.add(inv)
     db.session.commit()
 
-    frontend = current_app.config.get("FRONTEND_URL", "https://clarus.azurewebsites.net")
+    frontend = current_app.config.get("FRONTEND_URL", "http://localhost:5001")
     link = f"{frontend}/invite/accept?token={token}"
     try:
         send_invite_email(email, name, link)
