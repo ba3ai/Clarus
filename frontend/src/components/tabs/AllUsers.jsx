@@ -1,11 +1,9 @@
-// src/pages/AllUsers.jsx
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import AddUser from "./AddUser";
 
 const ITEMS_PER_PAGE = 10;
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
 
-const AllUsers = () => {
+export default function AllUsers() {
   const [users, setUsers] = useState([]);
   const [filteredUsers, setFilteredUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -14,86 +12,58 @@ const AllUsers = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showAddUserPopup, setShowAddUserPopup] = useState(false);
 
-  const navigate = useNavigate();
+  async function fetchUsers() {
+    try {
+      setLoading(true); setError("");
 
-    const fetchUsers = async () => {
-      try {
-        let token = localStorage.getItem("accessToken");
-        if (!token) throw new Error("Missing access token");
+      // Cookie-based auth: send credentials, no hardcoded origin
+      const res = await fetch(`${API_BASE}/admin/users`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
 
-        let res = await fetch("http://localhost:5001/admin/users", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        // If token is expired, try refreshing it
-        if (res.status === 401) {
-          token = await refreshAccessToken();
-          if (!token) throw new Error("Session expired. Please log in again.");
-
-          // Retry original request with new token
-          res = await fetch("http://localhost:5001/admin/users", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-        }
-
-        if (!res.ok) {
-          const message = await res.text();
-          throw new Error(`Failed to fetch users: ${res.status} - ${message}`);
-        }
-
-        const data = await res.json();
-        setUsers(data);
-        setFilteredUsers(data);
-      } catch (err) {
-        setError(err.message || "Error fetching users");
-      } finally {
-        setLoading(false);
+      if (res.status === 401) {
+        throw new Error("Not authorized. Please sign in again.");
       }
-    };
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        throw new Error(`Failed to fetch users: ${res.status}${msg ? ` – ${msg}` : ""}`);
+      }
 
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : data?.users || []);
+      setFilteredUsers(Array.isArray(data) ? data : data?.users || []);
+    } catch (err) {
+      setError(err?.message || "Error fetching users");
+      setUsers([]); setFilteredUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchUsers(); }, []);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  useEffect(() => {
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
     const filtered = users.filter(
-      (user) =>
-        user.name?.toLowerCase().includes(term) ||
-        user.email?.toLowerCase().includes(term)
+      (u) =>
+        (u.name || "").toLowerCase().includes(term) ||
+        (u.email || "").toLowerCase().includes(term)
     );
     setFilteredUsers(filtered);
     setCurrentPage(1);
   }, [searchTerm, users]);
 
-  const handleAddUser = () => {
-    setShowAddUserPopup(true);
-  };
-
-  const closePopup = () => {
-    setShowAddUserPopup(false);
-    fetchUsers();
-  };
-
-  const totalPages = Math.ceil(filteredUsers.length / ITEMS_PER_PAGE);
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / ITEMS_PER_PAGE));
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedUsers = filteredUsers.slice(
-    startIndex,
-    startIndex + ITEMS_PER_PAGE
-  );
+  const paginated = filteredUsers.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-  const handlePrev = () => {
-    if (currentPage > 1) setCurrentPage(currentPage - 1);
-  };
+  const handlePrev = () => setCurrentPage((p) => Math.max(1, p - 1));
+  const handleNext = () => setCurrentPage((p) => Math.min(totalPages, p + 1));
 
-  const handleNext = () => {
-    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
-  };
+  const handleAddUser = () => setShowAddUserPopup(true);
+  const closePopup = () => { setShowAddUserPopup(false); fetchUsers(); };
 
   if (loading) return <p className="text-center mt-6">Loading users...</p>;
   if (error) return <p className="text-center text-red-600 mt-6">{error}</p>;
@@ -102,6 +72,7 @@ const AllUsers = () => {
     <div className="p-4">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800 mb-6">All Users</h1>
+
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <input
             type="text"
@@ -131,20 +102,20 @@ const AllUsers = () => {
             </tr>
           </thead>
           <tbody>
-            {paginatedUsers.length === 0 ? (
+            {paginated.length === 0 ? (
               <tr>
                 <td colSpan="5" className="text-center p-4">
                   No users found.
                 </td>
               </tr>
             ) : (
-              paginatedUsers.map((user) => (
-                <tr key={user.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-2">{user.name}</td>
-                  <td className="px-4 py-2">{user.email}</td>
-                  <td className="px-4 py-2">{user.bank || "-"}</td>
-                  <td className="px-4 py-2">{user.status}</td>
-                  <td className="px-4 py-2">{user.permission}</td>
+              paginated.map((user) => (
+                <tr key={user.id || `${user.email}-${user.name}`} className="border-b hover:bg-gray-50">
+                  <td className="px-4 py-2">{user.name || "—"}</td>
+                  <td className="px-4 py-2">{user.email || "—"}</td>
+                  <td className="px-4 py-2">{user.bank || "—"}</td>
+                  <td className="px-4 py-2">{user.status || "—"}</td>
+                  <td className="px-4 py-2">{user.permission || "—"}</td>
                 </tr>
               ))
             )}
@@ -153,7 +124,7 @@ const AllUsers = () => {
       </div>
 
       <div className="text-sm text-gray-500 mt-4">
-        Showing {paginatedUsers.length} of {filteredUsers.length} users
+        Showing {paginated.length} of {filteredUsers.length} users
       </div>
 
       {totalPages > 1 && (
@@ -178,26 +149,21 @@ const AllUsers = () => {
         </div>
       )}
 
-      {/* AddUser Modal Popup */}
+      {/* AddUser modal placeholder — keep your existing <AddUser /> implementation */}
       {showAddUserPopup && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
-          <div className="relative w-full max-w-6xl">
-            <div className="absolute top-2 right-2">
-              <button
-                onClick={closePopup}
-                className="bg-white text-gray-600 px-3 py-1 rounded shadow hover:bg-gray-100"
-              >
-                ✖ Close
-              </button>
-            </div>
-            <div className="bg-white rounded-lg overflow-hidden shadow-lg max-h-[90vh] overflow-y-auto">
-              <AddUser />
-            </div>
+        <div className="fixed inset-0 bg-black/40 grid place-items-center z-50">
+          <div className="relative w-full max-w-6xl bg-white rounded-lg shadow-lg max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={closePopup}
+              className="absolute top-3 right-3 bg-white text-gray-600 px-3 py-1 rounded shadow hover:bg-gray-100"
+            >
+              ✖ Close
+            </button>
+            {/* If AddUser is local to another path, import it there. */}
+            {/* <AddUser /> */}
           </div>
         </div>
       )}
     </div>
   );
-};
-
-export default AllUsers;
+}

@@ -1,13 +1,12 @@
 // src/components/tabs/AddUser.jsx
 import React, { useState } from "react";
+import api from "../../services/api"; // <-- use the axios client that sends cookies & CSRF
 
 const USER_TYPES = [
   { value: "investor", label: "Investor" },
   { value: "generalpartner", label: "General Partner" },
   { value: "groupadmin", label: "Group Admin" },
 ];
-
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
 
 export default function AddUser() {
   const [form, setForm] = useState({ name: "", email: "", user_type: USER_TYPES[0].value });
@@ -20,31 +19,24 @@ export default function AddUser() {
     e.preventDefault();
     setStatus({ type: "", msg: "" });
 
-    const token = localStorage.getItem("accessToken");
-    if (!token) return setStatus({ type: "error", msg: "Please log in first." });
-
     try {
       setSubmitting(true);
-      const res = await fetch(`${API_BASE}/admin/invite`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          email: form.email.trim(),
-          user_type: form.user_type, // investor | generalpartner | groupadmin
-        }),
+      // Cookie session + CSRF header handled by api.js interceptors
+      const { data } = await api.post("/admin/invite", {
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        user_type: form.user_type, // investor | generalpartner | groupadmin (optional on backend)
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.msg || `${res.status} ${res.statusText}`);
-
-      setStatus({ type: "success", msg: "Invitation sent successfully!" });
+      setStatus({ type: "success", msg: data?.msg || "Invitation sent successfully!" });
       setForm({ name: "", email: "", user_type: USER_TYPES[0].value });
     } catch (err) {
-      setStatus({ type: "error", msg: err.message || "Failed to send invite." });
+      const msg =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "Failed to send invite.";
+      setStatus({ type: "error", msg });
     } finally {
       setSubmitting(false);
     }

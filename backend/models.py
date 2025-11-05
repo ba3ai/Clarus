@@ -8,7 +8,11 @@ from sqlalchemy.sql import func
 from backend.extensions import db
 
 # ------------------ User Model ------------------
-class User(db.Model):
+# models.py
+from flask_login import UserMixin  # <-- add this import
+
+# ------------------ User Model ------------------
+class User(db.Model, UserMixin):  # <-- inherit UserMixin
     id = db.Column(db.Integer, primary_key=True)
 
     first_name = db.Column(db.String(100), nullable=False)
@@ -29,14 +33,9 @@ class User(db.Model):
     status     = db.Column(db.String(20),  nullable=False, default="Active")
     permission = db.Column(db.String(50),  nullable=False, default="Viewer")
 
-    # Relationships
     investors = db.relationship("Investor", backref="owner", lazy=True, foreign_keys="Investor.owner_id")
     settings  = db.relationship("AdminSettings", backref="admin", uselist=False, lazy=True)
-
-    # SharePoint connections
     sp_connections = db.relationship("SharePointConnection", backref="user", lazy=True, cascade="all, delete-orphan")
-
-    # QuickBooks connections (two-way)
     qbo_connections = db.relationship(
         "QuickBooksConnection",
         back_populates="user",
@@ -44,8 +43,18 @@ class User(db.Model):
         cascade="all, delete-orphan",
     )
 
+    # --- Flask-Login helpers ---
+    @property
+    def is_active(self) -> bool:
+        # consider treating only explicit "Active" as active
+        return (self.status or "").lower() == "active"
+
+    def get_id(self) -> str:  # UserMixin already provides this, but keeping explicit is fine
+        return str(self.id)
+
     def __repr__(self):
         return f"<User {self.id} {self.email}>"
+
 
 
 # ------------------ Invitation Model ------------------

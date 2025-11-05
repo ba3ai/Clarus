@@ -1,11 +1,13 @@
 # backend/routes/documents_routes.py
-import os, uuid, mimetypes, json, time, hmac, hashlib, base64
-from flask import Blueprint, request, jsonify, current_app, send_from_directory, send_file, url_for, abort, Response
-from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
+import os, mimetypes, json, time, hmac, hashlib, base64
+from flask import (
+    Blueprint, request, jsonify, current_app,
+    send_from_directory, send_file, url_for, abort
+)
 from werkzeug.utils import secure_filename
-from backend.extensions import db
+from flask_login import login_required, current_user
 
-# Models (your existing ones)
+from backend.extensions import db
 from backend.models import User, Investor, Document, DocumentShare
 
 documents_bp = Blueprint("documents", __name__)
@@ -21,27 +23,18 @@ def _ensure_upload_dir():
     os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
 
-def _claims():
-    return get_jwt() or {}
-
-def _is_admin():
-    return str(_claims().get("user_type", "")).lower() == "admin"
+def _is_admin() -> bool:
+    return bool(
+        getattr(current_user, "is_authenticated", False)
+        and str(getattr(current_user, "user_type", "")).lower() == "admin"
+    )
 
 def _authed_user_id():
-    ident = get_jwt_identity()
-    if ident is not None:
+    if getattr(current_user, "is_authenticated", False) and getattr(current_user, "id", None) is not None:
         try:
-            return int(ident)
+            return int(current_user.id)
         except Exception:
-            return ident
-    c = _claims()
-    for key in ("sub_user_id", "user_id", "sub", "uid"):
-        val = c.get(key)
-        if val is not None:
-            try:
-                return int(val)
-            except Exception:
-                return val
+            return current_user.id
     return None
 
 def _is_admin_or_shared(doc_id: int) -> bool:
@@ -97,13 +90,49 @@ def _resolve_user_ids(raw_ids):
         )
         user_ids.update(int(row[0]) for row in linked if row and row[0])
 
+    # de-dupe but preserve order
     return list(dict.fromkeys(user_ids))
 
 def _label_from_user(first_name, last_name, email, fallback):
     name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     return name or (email or fallback)
 
+def _label_for_user_id(user_id: int):
+    """
+    Build a human label and email for a user id, preferring:
+    1) User first + last
+    2) Linked Investor.name
+    3) User email
+    4) 'User {id}'
+    """
+    row = (
+        db.session.query(
+            User.first_name, User.last_name, User.email, Investor.name.label("investor_name")
+        )
+        .outerjoin(Investor, Investor.account_user_id == User.id)
+        .filter(User.id == int(user_id))
+        .first()
+    )
+    if not row:
+        return {"label": f"User {user_id}", "email": None}
+    name = f"{(row.first_name or '').strip()} {(row.last_name or '').strip()}".strip()
+    if not name:
+        name = (row.investor_name or "").strip()
+    if not name:
+        name = row.email or f"User {user_id}"
+    return {"label": name, "email": row.email}
+
 def _serialize(doc: Document):
+    # include human-readable labels for shares
+    shares = []
+    for s in doc.shares:
+        meta = _label_for_user_id(s.investor_user_id)
+        shares.append({
+            "investor_user_id": s.investor_user_id,
+            "shared_at": s.shared_at.isoformat(),
+            "label": meta.get("label"),
+            "email": meta.get("email"),
+        })
     return {
         "id": doc.id,
         "title": doc.title,
@@ -111,14 +140,22 @@ def _serialize(doc: Document):
         "mime_type": doc.mime_type,
         "size_bytes": doc.size_bytes,
         "uploaded_at": doc.uploaded_at.isoformat(),
-        "shares": [
-            {
-                "investor_user_id": s.investor_user_id,
-                "shared_at": s.shared_at.isoformat(),
-            }
-            for s in doc.shares
-        ],
+        "shares": shares,
     }
+
+def _unique_filename(directory: str, requested_name: str) -> str:
+    """
+    Store with the (sanitized) original name, adding ' (1)', ' (2)'… before
+    the extension to avoid overwrites.
+    """
+    base = secure_filename(requested_name) or "upload"
+    name, ext = os.path.splitext(base)
+    candidate = base
+    counter = 1
+    while os.path.exists(os.path.join(directory, candidate)):
+        candidate = f"{name} ({counter}){ext}"
+        counter += 1
+    return candidate
 
 # ─────────────────────────────────────────────────────────────
 # HMAC preview signing (short-lived public links)
@@ -150,9 +187,8 @@ def _validate_sig(base_url_no_query: str, exp: int, sig: str) -> bool:
 # Role-based share options
 # ─────────────────────────────────────────────────────────────
 @documents_bp.get("/api/documents/share-options")
-@jwt_required()
+@login_required
 def share_options():
-    # (unchanged)
     if not _is_admin():
         return jsonify(error="Admins only."), 403
 
@@ -237,10 +273,10 @@ def share_options():
     return jsonify(ok=True, options=options)
 
 # ─────────────────────────────────────────────────────────────
-# Upload
+# Upload (stores using the original filename, made unique)
 # ─────────────────────────────────────────────────────────────
 @documents_bp.post("/api/documents/upload")
-@jwt_required()
+@login_required
 def upload_document():
     if not _is_admin():
         return jsonify(error="Admins only."), 403
@@ -257,9 +293,11 @@ def upload_document():
     resolved_user_ids = _resolve_user_ids(raw_ids)
 
     upload_dir = _ensure_upload_dir()
+
+    # Use sanitized original filename, ensure uniqueness on disk
     original = secure_filename(file.filename or "upload.bin")
-    ext = os.path.splitext(original)[1]
-    stored = f"{uuid.uuid4().hex}{ext or ''}"
+    stored   = _unique_filename(upload_dir, original)
+
     mime = file.mimetype or mimetypes.guess_type(original)[0] or "application/octet-stream"
     path = os.path.join(upload_dir, stored)
     file.save(path)
@@ -267,8 +305,8 @@ def upload_document():
 
     doc = Document(
         title=title or os.path.splitext(original)[0],
-        original_name=original,
-        stored_name=stored,
+        original_name=original,     # uploaded name
+        stored_name=stored,         # on-disk name (original or "original (n).ext")
         mime_type=mime,
         size_bytes=size,
         uploaded_by_user_id=int(_authed_user_id() or 0),
@@ -286,7 +324,7 @@ def upload_document():
 # List documents
 # ─────────────────────────────────────────────────────────────
 @documents_bp.get("/api/documents")
-@jwt_required()
+@login_required
 def list_documents():
     if _is_admin():
         docs = Document.query.order_by(Document.uploaded_at.desc()).all()
@@ -306,7 +344,7 @@ def list_documents():
 # Share / Revoke
 # ─────────────────────────────────────────────────────────────
 @documents_bp.post("/api/documents/share")
-@jwt_required()
+@login_required
 def share_document():
     if not _is_admin():
         return jsonify(error="Admins only."), 403
@@ -331,7 +369,7 @@ def share_document():
     return jsonify(ok=True, document=_serialize(doc))
 
 @documents_bp.delete("/api/documents/share")
-@jwt_required()
+@login_required
 def revoke_share():
     if not _is_admin():
         return jsonify(error="Admins only."), 403
@@ -348,7 +386,7 @@ def revoke_share():
 # Download (Admin or shared user)
 # ─────────────────────────────────────────────────────────────
 @documents_bp.get("/api/documents/download/<int:doc_id>")
-@jwt_required()
+@login_required
 def download_document(doc_id: int):
     if not _is_admin_or_shared(doc_id):
         return jsonify(error="Not authorized."), 403
@@ -358,8 +396,8 @@ def download_document(doc_id: int):
     upload_dir = _ensure_upload_dir()
     return send_from_directory(
         upload_dir,
-        doc.stored_name,
-        download_name=doc.original_name,
+        doc.stored_name,                 # equals original or original (n).ext
+        download_name=doc.original_name, # preserve uploader name in the download dialog
         mimetype=doc.mime_type,
         as_attachment=True,
     )
@@ -368,7 +406,7 @@ def download_document(doc_id: int):
 # Inline view (authenticated) – handy for quick previews
 # ─────────────────────────────────────────────────────────────
 @documents_bp.get("/api/documents/view/<int:doc_id>")
-@jwt_required()
+@login_required
 def view_document(doc_id: int):
     if not _is_admin_or_shared(doc_id):
         return jsonify(error="Not authorized."), 403
@@ -382,30 +420,21 @@ def view_document(doc_id: int):
     return send_file(path, mimetype=doc.mime_type or "application/octet-stream")
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Signed preview URL (for cloud viewers)
+# Signed preview URL (for cloud viewers)
 # ─────────────────────────────────────────────────────────────
 @documents_bp.get("/api/documents/preview-url/<int:doc_id>")
-@jwt_required()
+@login_required
 def preview_url_document(doc_id: int):
-    """
-    Returns a short-lived public URL that cloud viewers (Office/GDocs) can access.
-    The public URL is validated by HMAC (exp, sig) in 'public-download' below.
-    """
     if not _is_admin_or_shared(doc_id):
         return jsonify(error="Not authorized."), 403
-    # absolute URL without query (we sign the path)
     abs_path = url_for("documents.public_download_document", doc_id=doc_id, _external=True)
     return jsonify({"url": _sign_public_url(abs_path)})
 
 @documents_bp.get("/api/documents/public-download/<int:doc_id>")
 def public_download_document(doc_id: int):
-    """
-    Public endpoint used by previews. We validate signature & expiration
-    and then serve IN-LINE (no attachment) so <iframe> can render.
-    """
     exp = int(request.args.get("exp", "0") or 0)
     sig = request.args.get("sig", "") or ""
-    base_no_query = request.base_url  # no query string
+    base_no_query = request.base_url
     if not _validate_sig(base_no_query, exp, sig):
         return abort(403)
 
@@ -418,7 +447,6 @@ def public_download_document(doc_id: int):
     if not os.path.exists(path):
         return jsonify(error="File missing on server."), 404
 
-    # Inline (important for embedding)
     return send_file(
         path,
         mimetype=doc.mime_type or "application/octet-stream",
@@ -434,7 +462,7 @@ def public_download_document(doc_id: int):
 # Delete document (admin only). Removes shares, file, row
 # ─────────────────────────────────────────────────────────────
 @documents_bp.delete("/api/documents/<int:doc_id>")
-@jwt_required()
+@login_required
 def delete_document(doc_id: int):
     if not _is_admin():
         return jsonify(error="Admins only."), 403

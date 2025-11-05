@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 import secrets
 import logging
 
+from functools import wraps
+from flask import jsonify
+from flask_login import current_user, login_required
+
 from backend.extensions import db
 from backend.models import User, Investor, Record, Invitation
 
@@ -39,54 +43,54 @@ def send_invite_email(email: str, name: str | None, link: str) -> None:
         current_app.logger.info("[DEV] Invite link for %s: %s", email, link)
 
 
-# 🔐 Admin-only decorator (based on user_type in JWT claims)
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        claims = get_jwt()
-        if claims.get("user_type") != "admin":
+        if not getattr(current_user, "is_authenticated", False):
+            return jsonify({"msg": "Unauthorized"}), 401
+        if getattr(current_user, "user_type", "").lower() != "admin":
             return jsonify({"msg": "Admins only"}), 403
         return fn(*args, **kwargs)
-
     return wrapper
-
 
 # ─────────────────────── Invite Flow ───────────────────────
 
-@admin_bp.post("/invite")
-@jwt_required()
+@admin_bp.route("/invite", methods=["POST"])
+@login_required
 @admin_required
-def create_invitation():
-    """
-    Admin sends an invitation (Name + Email).
-    Sends an email with a one-time, 7-day tokenized link:
-      {FRONTEND_URL}/invite/accept?token=...
-    """
-    data = request.get_json() or {}
+def invite_user():
+    data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
-    name = (data.get("name") or "").strip()
+    name  = (data.get("name") or "").strip()
+    user_type = (data.get("user_type") or "investor").strip().lower()
 
     if not email:
         return jsonify({"msg": "Email is required"}), 400
-    if User.query.filter_by(email=email).first():
+
+    if User.query.filter(User.email.ilike(email)).first():
         return jsonify({"msg": "A user with this email already exists"}), 409
 
-    # If an active invite already exists for this email, revoke it and issue a new one
-    Invitation.query.filter(
-        Invitation.email == email,
-        Invitation.status == "pending",
-    ).update({"status": "revoked"})
-    db.session.commit()
+    existing = Invitation.query.filter_by(email=email, status="pending").first()
+    if existing:
+        return jsonify({"msg": "An active invitation already exists"}), 409
 
     token = secrets.token_urlsafe(32)
+
+    # Build the Invitation without 'role' (column doesn't exist)
     inv = Invitation(
         email=email,
         name=name or None,
         token=token,
-        invited_by=get_jwt_identity(),
+        invited_by=getattr(current_user, "id", None),
         status="pending",
         expires_at=datetime.utcnow() + timedelta(days=7),
+        created_at=datetime.utcnow(),
     )
+
+    # If your Invitation model DOES have 'user_type', set it here safely.
+    if hasattr(Invitation, "user_type"):
+        setattr(inv, "user_type", user_type)
+
     db.session.add(inv)
     db.session.commit()
 
@@ -95,8 +99,8 @@ def create_invitation():
     try:
         send_invite_email(email, name, link)
     except Exception:
-        logging.exception("Failed to send invite email")
-        # Still return 201; the admin can copy the token from the response in dev
+        current_app.logger.exception("Failed to send invite email")
+
     return jsonify({"msg": "Invitation created", "token": token}), 201
 
 
@@ -104,7 +108,7 @@ def create_invitation():
 
 # ✅ Admin creates a new investor user and their profile
 @admin_bp.route("/create-user", methods=["POST"])
-@jwt_required()
+@login_required
 @admin_required
 def create_user():
     data = request.get_json() or {}
@@ -138,7 +142,7 @@ def create_user():
 
 # ✅ Add a new investor
 @admin_bp.route("/investor", methods=["POST"])
-@jwt_required()
+@login_required
 @admin_required
 def add_investor():
     data = request.get_json() or {}
@@ -152,7 +156,7 @@ def add_investor():
 
 # ✅ Add a financial record manually
 @admin_bp.route("/record", methods=["POST"])
-@jwt_required()
+@login_required
 @admin_required
 def add_record():
     data = request.get_json() or {}
@@ -173,7 +177,7 @@ def add_record():
 
 # ✅ Admin adds user (direct create; separate from invite flow)
 @admin_bp.route("/add_user", methods=["POST"])
-@jwt_required()
+@login_required
 @admin_required
 def add_user():
     data = request.get_json() or {}
@@ -207,7 +211,7 @@ def add_user():
 
 # ✅ Get all users
 @admin_bp.route("/users", methods=["GET"])
-@jwt_required()
+@login_required
 @admin_required
 def get_all_users():
     users = User.query.all()

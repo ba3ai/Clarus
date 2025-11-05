@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.extensions import db
 from backend.models import Investor  # <-- use Investor directly
+from flask_login import login_required
 
 manual_entry_bp = Blueprint("manual_entry", __name__, url_prefix="/manual")
 
@@ -18,7 +19,7 @@ def _compose_address(address1, address2, country, city, state, zip_code):
     return ", ".join([p for p in parts if p])
 
 @manual_entry_bp.post("/manual_entry")
-@jwt_required()
+@login_required
 def save_manual_entry():
     """
     Create a new Investor from the NEW manual entry form:
@@ -88,7 +89,7 @@ def save_manual_entry():
 
 
 @manual_entry_bp.get("/manual_entry")
-@jwt_required()
+@login_required
 def list_manual_entries():
     """
     Return latest manual-created investors for the current owner/admin.

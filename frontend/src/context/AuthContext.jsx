@@ -1,77 +1,62 @@
 // src/context/AuthContext.jsx
 import React, { createContext, useEffect, useMemo, useState } from "react";
-import { jwtDecode } from "jwt-decode";
+import api from "../services/api";
 
 /**
- * Shape:
- *  user === undefined  -> booting (App should show a loader)
- *  user === null       -> logged out
- *  user === object     -> logged in { id, email, user_type, ... }
+ * user === undefined  -> booting (wait; don't redirect)
+ * user === null       -> logged out
+ * user === object     -> logged in
  */
 export const AuthContext = createContext({
   user: undefined,
   setUser: () => {},
-  logout: () => {},
+  logout: async () => {},
 });
 
-function decodeToken(token) {
-  if (!token) return null;
-  try {
-    const d = jwtDecode(token);
-    // Basic expiry guard (optional — jwtDecode doesn't validate exp)
-    if (d?.exp && Date.now() >= d.exp * 1000) return null;
-    return {
-      id: d.sub || d.user_id || null,
-      email: d.email || null,
-      user_type: (d.user_type || "").toLowerCase(), // "admin" | "groupadmin" | "investor"
-      full_name: d.full_name || null,
-      permission: d.permission || null,
-      token,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function AuthProvider({ children }) {
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(undefined); // booting
 
-  // Restore session on first load
+  // Rehydrate from the server-side session on first load
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    const u = decodeToken(token);
-    if (!u) {
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
-      setUser(null);
-    } else {
-      setUser(u);
-    }
-  }, []);
-
-  // Keep multiple tabs in sync
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === "accessToken") {
-        const u = decodeToken(e.newValue);
-        setUser(u || null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/auth/me"); // cookie sent automatically
+        if (!cancelled) {
+          if (data?.ok && data?.user) {
+            const u = data.user;
+            setUser({
+              id: u.id,
+              email: u.email,
+              user_type: (u.user_type || "").toLowerCase(),
+              name:
+                u.name ||
+                [u.first_name, u.last_name].filter(Boolean).join(" ") ||
+                null,
+              permission: u.permission || null,
+            });
+          } else {
+            setUser(null);
+          }
+        }
+      } catch {
+        if (!cancelled) setUser(null);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const logout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+  const logout = async () => {
+    try {
+      await api.post("/auth/logout"); // clears server session
+    } catch {}
     setUser(null);
   };
 
   const value = useMemo(() => ({ user, setUser, logout }), [user]);
-
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// Export both named and default to avoid import mistakes
-export { AuthProvider };
 export default AuthProvider;

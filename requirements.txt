@@ -99,3 +99,12 @@ intuit-oauth
 python-quickbooks
 yfinance
 gunicorn
+faiss-cpu
+psycopg2-binary
+python-pptx
+python-docx
+PyPDF2
+pdfminer.six
+pypdf
+Werkzeug
+Flask-Login

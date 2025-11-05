@@ -3,12 +3,13 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.models import User
 from backend.extensions import db
+from flask_login import login_required
 import os, uuid
 
 profile_bp = Blueprint("profile", __name__)
 
 @profile_bp.get("/auth/me")
-@jwt_required()
+@login_required
 def me():
   uid = int(get_jwt_identity())
   u = User.query.get(uid)
@@ -27,7 +28,7 @@ def me():
   }, "profile": profile})
 
 @profile_bp.put("/auth/profile")
-@jwt_required()
+@login_required
 def update_profile():
   uid = int(get_jwt_identity())
   u = User.query.get(uid)
@@ -44,7 +45,7 @@ def update_profile():
   return jsonify({"ok": True})
 
 @profile_bp.put("/auth/profile/avatar")
-@jwt_required()
+@login_required
 def update_avatar():
   uid = int(get_jwt_identity())
   u = User.query.get(uid)

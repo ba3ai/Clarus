@@ -1,8 +1,7 @@
 // src/pages/AcceptInvite.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+import api from "../services/api";
 
 export default function AcceptInvite() {
   const [params] = useSearchParams();
@@ -42,6 +41,7 @@ export default function AcceptInvite() {
     return (f + l || "A").toUpperCase();
   }, [form.first_name, form.last_name]);
 
+  // Load invite details
   useEffect(() => {
     if (!token) {
       setErr("Invite token missing.");
@@ -50,12 +50,10 @@ export default function AcceptInvite() {
     }
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/admin/invite/${token}`);
-        const j = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(j?.msg || `Invite lookup failed (${res.status})`);
+        const { data } = await api.get(`/admin/invite/${token}`);
 
         // Split name from invite into first/last
-        const name = (j?.name || "").trim();
+        const name = (data?.name || "").trim();
         let first_name = "", last_name = "";
         if (name) {
           const parts = name.split(" ");
@@ -67,11 +65,16 @@ export default function AcceptInvite() {
           ...f,
           first_name,
           last_name,
-          email: j?.email || "",
+          email: data?.email || "",
         }));
         setErr("");
       } catch (e) {
-        setErr(e.message || "Invalid or expired link.");
+        const msg =
+          e?.response?.data?.msg ||
+          e?.response?.data?.error ||
+          e?.message ||
+          "Invalid or expired link.";
+        setErr(msg);
       } finally {
         setLoading(false);
       }
@@ -98,18 +101,16 @@ export default function AcceptInvite() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/admin/invite/${token}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.msg || `Unable to create account (${res.status})`);
-
-      setOk("Account created. Redirecting to login…");
+      const { data } = await api.post(`/admin/invite/${token}`, form);
+      setOk(data?.msg || "Account created. Redirecting to login…");
       setTimeout(() => navigate("/login"), 900);
     } catch (e) {
-      setErr(e.message || "Something went wrong.");
+      const msg =
+        e?.response?.data?.msg ||
+        e?.response?.data?.error ||
+        e?.message ||
+        "Something went wrong.";
+      setErr(msg);
     }
   };
 

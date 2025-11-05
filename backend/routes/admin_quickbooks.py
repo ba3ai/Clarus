@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from backend.extensions import db
 from backend.models import AdminSettings
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_login import login_required
 
 admin_qb_bp = Blueprint("admin_qb", __name__, url_prefix="/api/admin")  # ✅ ADD this prefix here
 
@@ -14,7 +15,7 @@ admin_qb_bp = Blueprint("admin_qb", __name__, url_prefix="/api/admin")  # ✅ AD
 
 # ---------------- Save QuickBooks API ----------------
 @admin_qb_bp.route("/api/admin/quickbooks-api", methods=["POST"])
-@jwt_required()
+@login_required
 def save_quickbooks_api():
     data = request.get_json()
     api = data.get("api")
@@ -37,7 +38,7 @@ def save_quickbooks_api():
 
 # ---------------- Get QuickBooks API ----------------
 @admin_qb_bp.route("/api/admin/quickbooks-api", methods=["GET"])
-@jwt_required()
+@login_required
 def get_quickbooks_api():
     user_id = get_jwt_identity()
     setting = AdminSettings.query.filter_by(admin_id=user_id).first()
@@ -50,7 +51,7 @@ def get_quickbooks_api():
 
 # ---------------- Mock Customer Data (Simulate Intuit Response Format) ----------------
 @admin_qb_bp.route("/api/admin/quickbooks/customers", methods=["GET"])
-@jwt_required()
+@login_required
 def get_quickbooks_customers():
     mock_customers = [
         {

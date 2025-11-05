@@ -12,8 +12,7 @@ from openpyxl import load_workbook
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-import re  # <-- add near top with other imports
-
+import re  # <-- used for filename year detection
 
 from backend.models import (
     db,
@@ -25,6 +24,8 @@ from backend.models import (
 
 # Reuse the same investor ingest logic used by SharePoint so behavior matches
 from backend.routes.investor_sync_routes import _ingest_investor_values
+
+# NEW: embed workbook into the vector KB so chat can retrieve from it
 
 # Optional lineage record
 try:
@@ -378,7 +379,7 @@ def _classify_workbook(values: List[List]) -> str:
     return "unknown"
 
 
-# ---------------------- INVESTMENTS INGEST (hardened for month-names + year banners) ----------------------
+# ---------------------- INVESTMENTS INGEST ----------------------
 _MONTHS = {
     "jan": 1, "january": 1,
     "feb": 2, "february": 2,
@@ -395,10 +396,6 @@ _MONTHS = {
 }
 
 def _find_header_row(values: List[List]) -> int:
-    """
-    Prefer the row that contains 'Investments' (or 'Investment') as a header.
-    Otherwise, fall back to the first non-empty row.
-    """
     upto = min(80, len(values))
     for i in range(upto):
         row = [str(x or "").strip().lower() for x in values[i]]
@@ -414,36 +411,22 @@ def _month_end(d: date) -> date:
     return date(d.year, d.month, monthrange(d.year, d.month)[1])
 
 def _detect_year_banners(values: List[List], top_rows: int = 6) -> Dict[int, int]:
-    """
-    Detect year banners (e.g., '2024', '2025 Valuations') in the first few rows.
-    Ignores numeric cells and large amounts like '2,036,000.00' that contain '2036'.
-    """
     year_by_col: Dict[int, int] = {}
     upto = min(top_rows, len(values))
     for r in range(upto):
         row = values[r] or []
         for j, cell in enumerate(row):
-            # 1) Ignore numeric cells outright
             if isinstance(cell, (int, float)):
                 continue
-
             txt_raw = "" if cell is None else str(cell)
             txt = _clean_txt(txt_raw)
-
-            # 2) Skip empty after cleaning
             if not txt:
                 continue
-
-            # 3) Accept if it's exactly a 4-digit year
             if _re.fullmatch(r"\s*(20\d{2})\s*", txt):
                 year_by_col.setdefault(j, int(_re.fullmatch(r"\s*(20\d{2})\s*", txt).group(1)))
                 continue
-
-            # 4) Otherwise, require that the cell has at least one letter
-            #    (so plain numbers like '2,036,000' won't match)
             if not _re.search(r"[a-z]", txt):
                 continue
-
             m = _re.search(r"\b(20\d{2})\b", txt)
             if m:
                 year_by_col.setdefault(j, int(m.group(1)))
@@ -454,23 +437,6 @@ def _detect_date_columns(
     header_row_idx: int,
     preferred_year: Optional[int] = None
 ) -> Dict[int, date]:
-    """
-    Map 0-based column -> month-end date for the Investments grid.
-
-    STRONG RULE:
-    - If preferred_year is available (e.g., '2024 Valuation Table.xlsx'),
-      we look for the row that actually contains month names (Jan..Dec)
-      in a window around the header, and we build dates as
-      (preferred_year, month_from_header) ONLY. We do NOT use any
-      fallback that can misinterpret numbers as Excel serial dates.
-
-    FALLBACK (only when preferred_year is None):
-      1) Explicit 'Ending Date' row of real dates.
-      2) Best row that has many real dates.
-      3) Dates embedded directly in header cells.
-      4) Month-name headers + YEAR banners near the top band.
-      5) Scan upward per column for a real date.
-    """
     from calendar import monthrange as _mr
 
     rows = len(values)
@@ -499,29 +465,19 @@ def _detect_date_columns(
                     out[j] = date(y, m, _mr(y, m)[1])
         return out
 
-    # --- FILENAME-FIRST PATH (robust): find the real month header row and use preferred_year ---
     if preferred_year is not None:
-        # 1) try the declared header row
         out = _month_map_for_row(header_row_idx)
         if out:
             return out
-
-        # 2) search a window around the header row (±3)
         for off in [1, -1, 2, -2, 3, -3]:
             out = _month_map_for_row(header_row_idx + off)
             if out:
                 return out
-
-        # 3) as a last resort, scan the very top band (first 8 rows)
         for ridx in range(min(rows, 8)):
             out = _month_map_for_row(ridx)
             if out:
                 return out
 
-        # If still nothing, fall through to legacy heuristics (rare templates)
-
-    # --------------------- Legacy heuristics (no preferred_year) ---------------------
-    # 1) Explicit 'Ending Date' row
     for r in range(0, min(rows, 120)):
         row = values[r] if r < rows else []
         if any(_clean_txt(str(c)) == "ending date" for c in row):
@@ -533,7 +489,6 @@ def _detect_date_columns(
             if out:
                 return out
 
-    # 2) Best row of many dates
     best_r = None
     best_count = 0
     for r in range(0, min(rows, 120)):
@@ -551,7 +506,6 @@ def _detect_date_columns(
         if out:
             return out
 
-    # 3) Dates embedded directly in header cells
     header = values[header_row_idx] if header_row_idx < rows else []
     out: Dict[int, date] = {}
     for j in range(cols):
@@ -561,7 +515,6 @@ def _detect_date_columns(
     if out:
         return out
 
-    # 4) Month names + banners (hardened)
     year_banners: Dict[int, int] = _detect_year_banners(values, top_rows=6)
 
     def _nearest_banner_year_to_right(col: int) -> Optional[int]:
@@ -583,7 +536,6 @@ def _detect_date_columns(
     if out:
         return out
 
-    # 5) Upward scan per column
     out = {}
     for j in range(cols):
         r = header_row_idx - 1
@@ -594,7 +546,6 @@ def _detect_date_columns(
                 break
             r -= 1
     return out
-
 
 
 def _ensure_color(i: int) -> str:
@@ -611,22 +562,13 @@ def _ingest_investments_table(
     source_id: Optional[int],
     preferred_year: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """
-    Parse the investments grid and upsert Investment + PortfolioInvestmentValue.
-    - Detect header row (the one with 'Investments' / 'Investment')
-    - Resolve monthly columns (using month-name headers + year banners)
-    - If preferred_year is provided (parsed from filename), only ingest months for that year
-    - STOP at the 'Portfolio Total' row
-    """
     if not values or len(values) < 2:
         return {"ok": False, "error": "No cells to parse", "sheet": resolved_sheet}
 
-    # Header / columns
     header_row_idx = _find_header_row(values)
     header = [str(c or "").strip() for c in values[header_row_idx]]
     header_lc = [h.lower() for h in header]
 
-    # Find 'Investments' column
     name_idx = None
     for j, h in enumerate(header_lc):
         if _re.match(r"^invest(ment|ments)\b", h or ""):
@@ -641,14 +583,10 @@ def _ingest_investments_table(
             "note": "No Investments column found in header.",
         }
 
-    # Map date columns (now with preferred_year)
     date_cols = _detect_date_columns(values, header_row_idx, preferred_year=preferred_year)
     if not date_cols:
         return {"ok": False, "error": "Could not locate monthly date columns for investments grid.", "sheet": resolved_sheet}
 
-    # If a preferred year is known, restrict to that year
-    # If a preferred year is known, restrict to that year ONLY
-    print("preferred_year =", preferred_year)
     if preferred_year is not None:
         date_cols = {j: d for j, d in date_cols.items() if d.year == preferred_year}
         if not date_cols:
@@ -679,7 +617,6 @@ def _ingest_investments_table(
         if clean_name in {"total", "grand total"}:
             continue
 
-        # ensure Investment row
         if name not in ensured:
             inv = Investment.query.filter_by(name=name).first()
             if not inv:
@@ -690,7 +627,6 @@ def _ingest_investments_table(
             ensured_order.append(name)
         inv_id = ensured[name]
 
-        # upsert values for the resolved months
         for j0b, mdt in sorted(date_cols.items(), key=lambda x: (x[1].year, x[1].month)):
             v = r[j0b] if j0b < len(r) else None
             f = _to_float_cell(v)
@@ -716,7 +652,7 @@ def _ingest_investments_table(
     }
 
 
-# ---------------------- ROUTE: upload + (admin + investor + investments) ----------------------
+# ---------------------- ROUTE: upload + (admin + investor + investments + KB embed) ----------------------
 @excel_bp.post("/upload_and_ingest")
 def upload_and_ingest():
     """
@@ -748,7 +684,6 @@ def upload_and_ingest():
         # --- Resolve sheet + read values FIRST (so we can classify before ingesting) ---
         wb = load_workbook(path, data_only=True, read_only=True)
         try:
-            # pick the requested sheet if possible, else guess sensibly
             if sheet and sheet in wb.sheetnames:
                 resolved_sheet = sheet
             else:
@@ -779,12 +714,10 @@ def upload_and_ingest():
         normalized = _normalize_sheet_name(resolved_sheet)
         file_type = _classify_workbook(values or [])  # investment / balance / mixed / unknown
 
-        # Heuristics:
         is_master = normalized == "master"
         looks_balance = ("bcas" in normalized) or ("q4adj" in normalized) or (file_type == "balance")
         looks_invest  = is_master or (file_type == "investment")
 
-        # If mixed, prefer the sheet’s name: 'Master' => investments, 'bCAS ...' => balance
         if file_type == "mixed":
             looks_invest = is_master
             looks_balance = not is_master
@@ -837,13 +770,13 @@ def upload_and_ingest():
             except Exception as e:
                 inv_payload = {"ok": False, "error": f"Investments ingest failed: {e}", "sheet": resolved_sheet}
 
+
         # --- Record upload history & cleanup ---
         db.session.add(ExcelUploadHistory(filename=filename, uploaded_at=datetime.utcnow()))
         db.session.commit()
         try: os.remove(path)
         except Exception: pass
 
-        # --- Response (same keys as before) ---
         return jsonify({
             "ok": True,
             "sheet": resolved_sheet,
@@ -862,4 +795,3 @@ def upload_and_ingest():
         db.session.rollback()
         traceback.print_exc()
         return jsonify(error="Upload/ingest failed. See server logs."), 500
-

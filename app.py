@@ -1,16 +1,17 @@
 # backend/app.py
 import os
+import secrets
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Iterable
 
-from flask import Flask, jsonify, send_from_directory, abort, Response
+from flask import Flask, jsonify, send_from_directory, abort, Response, session
 from flask_cors import CORS
 from flask_session import Session
 from flask_mail import Mail
 from dotenv import load_dotenv
 
 from backend.config import Config
-from backend.extensions import init_extensions, db  # single shared SQLAlchemy/Migrate/JWT instances
+from backend.extensions import init_extensions, db, login_manager  # single shared SQLAlchemy/Migrate/JWT instances
 
 # ===== Blueprints =====
 from backend.routes.auth_routes import auth_bp
@@ -27,23 +28,24 @@ from backend.routes.auth_ms_routes import auth_ms_bp
 from backend.routes.chat_routes import chat_bp
 from backend.routes.profile_routes import profile_bp
 from backend.routes.files_routes import files_bp
-from backend.routes.contacts_routes import contacts_bp                  # market/file syncs, etc.
-from backend.routes.market import market_bp                        # market data endpoints
-from backend.routes.documents_routes import documents_bp            # document upload/download
-# QBO + metrics autosync + users (from your other app.py)
+from backend.routes.contacts_routes import contacts_bp
+from backend.routes.market import market_bp
+from backend.routes.documents_routes import documents_bp
 from backend.routes.qbo_routes import qbo_bp
 from backend.routes.metrics_sync import metrics_sync_bp, init_autosync
 from backend.routes.users_routes import users_bp
 from backend.routes.portfolio_routes import portfolio_bp
-# Optional: DB auto-migrations helper (safe no-op if not present)
 from backend.auto_migrations import run_auto_migrations
 from backend.routes.investor_sync_routes import investor_sync_bp
 from backend.routes.statements_routes import statements_bp
 from backend.routes.settings_routes import settings_bp
+from backend.routes.kb_routes import kb_bp
 from backend.scheduler import start_scheduler
-
+from datetime import timedelta
+from backend.models import User
 
 mail = Mail()
+
 
 # ---------- helpers ----------
 def _to_bool(env_name: str, default: str = "true") -> bool:
@@ -93,12 +95,12 @@ def _resolve_frontend_dist() -> Optional[Path]:
         if p.is_dir():
             return p
 
-    # 2) repo-root/frontend/dist  (works when app.py is at repo root)
+    # 2) repo-root/frontend/dist
     p_root_frontend = (here / "frontend" / "dist").resolve()
     if p_root_frontend.is_dir():
         return p_root_frontend
 
-    # 3) backend/frontend/dist    (works when app.py sits under backend/)
+    # 3) backend/frontend/dist
     p_backend_frontend = (here.parent / "frontend" / "dist").resolve()
     if p_backend_frontend.is_dir():
         return p_backend_frontend
@@ -111,21 +113,17 @@ def _resolve_frontend_dist() -> Optional[Path]:
     return None
 
 
-
 # =========================
 #   Database bootstrap
 # =========================
 def _auto_db_bootstrap(app: Flask) -> None:
-    """
-    1) Run Alembic upgrade if migrations/ exists
-    2) Otherwise create tables
-    """
+    """Run Alembic upgrade if migrations exist; otherwise create tables."""
     try:
         from flask_migrate import upgrade
         migrations_dir = (Path(__file__).resolve().parent.parent / "migrations")
         with app.app_context():
             if migrations_dir.is_dir():
-                upgrade(directory=str(migrations_dir))   # apply migrations
+                upgrade(directory=str(migrations_dir))  # apply migrations
             else:
                 db.create_all()                          # first-time dev
     except Exception as e:
@@ -143,14 +141,10 @@ def _create_missing_tables(app: Flask) -> None:
         db.create_all()
 
 
-# ---- SQLite-only tweaks (dev convenience). Remove when fully on Alembic. ----
 def _ensure_user_columns(app: Flask) -> None:
-    """
-    Bring SQLite 'user' table up-to-date with new columns if they don't exist.
-    """
+    """Bring SQLite 'user' table up-to-date with new columns if they don't exist."""
     from sqlalchemy import text
     required_cols = {
-        # name: (sqlite type, default_sql, not_null)
         "first_name": ("VARCHAR(100)", "''", True),
         "last_name": ("VARCHAR(100)", "''", True),
         "username": ("VARCHAR(120)", "NULL", False),
@@ -179,29 +173,28 @@ def _ensure_user_columns(app: Flask) -> None:
 
 
 def _ensure_investor_columns(app: Flask) -> None:
-    """
-    Ensure the SQLite 'investor' table has all columns defined in the Investor model.
-    """
+    """Ensure the SQLite 'investor' table has all columns defined in the Investor model."""
     from sqlalchemy import text
     required_cols = {
-        "company_name":   ("VARCHAR(150)", "NULL", False),
-        "address":        ("VARCHAR(255)", "NULL", False),
-        "contact_phone":  ("VARCHAR(50)",  "NULL", False),
-        "email":          ("VARCHAR(120)", "NULL", False),
-        "account_user_id":("INTEGER",      "NULL", False),
-        "invitation_id":  ("INTEGER",      "NULL", False),
-        "birthdate":      ("VARCHAR(20)",  "NULL", False),
-        "citizenship":    ("VARCHAR(100)", "NULL", False),
-        "ssn_tax_id":     ("VARCHAR(64)",  "NULL", False),
-        "address1":       ("VARCHAR(200)", "NULL", False),
-        "address2":       ("VARCHAR(200)", "NULL", False),
-        "country":        ("VARCHAR(100)", "NULL", False),
-        "city":           ("VARCHAR(100)", "NULL", False),
-        "state":          ("VARCHAR(100)", "NULL", False),
-        "zip":            ("VARCHAR(20)",  "NULL", False),
-        "avatar_url":     ("VARCHAR(300)", "NULL", False),
-        "created_at":     ("DATETIME",     "NULL", False),
-        "updated_at":     ("DATETIME",     "NULL", False),
+        "company_name":    ("VARCHAR(150)",    None,            False),
+        "address":         ("VARCHAR(255)",    None,            False),
+        "contact_phone":   ("VARCHAR(50)",     None,            False),
+        "email":           ("VARCHAR(120)",    None,            False),
+        "account_user_id": ("INTEGER",         None,            False),
+        "invitation_id":   ("INTEGER",         None,            False),
+        "birthdate":       ("VARCHAR(20)",     None,            False),
+        "citizenship":     ("VARCHAR(100)",    None,            False),
+        "ssn_tax_id":      ("VARCHAR(64)",     None,            False),
+        "address1":        ("VARCHAR(200)",    None,            False),
+        "address2":        ("VARCHAR(200)",    None,            False),
+        "country":         ("VARCHAR(100)",    None,            False),
+        "city":            ("VARCHAR(100)",    None,            False),
+        "state":           ("VARCHAR(100)",    None,            False),
+        "zip":             ("VARCHAR(20)",     None,            False),
+        "avatar_url":      ("VARCHAR(300)",    None,            False),
+        # ✅ fixed types and sensible defaults
+        "created_at":      ("DATETIME",        "(CURRENT_TIMESTAMP)", True),
+        "updated_at":      ("DATETIME",        "(CURRENT_TIMESTAMP)", True),
     }
     with app.app_context():
         engine = db.engine
@@ -211,7 +204,7 @@ def _ensure_investor_columns(app: Flask) -> None:
                 for name, (ctype, default_sql, not_null) in required_cols.items():
                     if name not in cols:
                         nn = " NOT NULL" if not_null else ""
-                        default_clause = f" DEFAULT {default_sql}" if default_sql is not None else ""
+                        default_clause = f" DEFAULT {default_sql}" if default_sql else ""
                         sql = f"ALTER TABLE investor ADD COLUMN {name} {ctype}{nn}{default_clause};"
                         conn.execute(text(sql))
                 conn.commit()
@@ -220,10 +213,7 @@ def _ensure_investor_columns(app: Flask) -> None:
 
 
 def _ensure_sp_connection_columns(app: Flask) -> None:
-    """
-    Ensure the SQLite 'sp_connections' table has columns used by SharePointConnection,
-    especially the new 'is_shared' flag for shared live reads.
-    """
+    """Ensure 'sp_connections' includes the new 'is_shared' flag, etc."""
     from sqlalchemy import text
     required_cols = {
         "url":        ("TEXT",           "''",   True),
@@ -252,18 +242,13 @@ def _ensure_sp_connection_columns(app: Flask) -> None:
 
 
 def _seed_default_admin(app: Flask) -> None:
-    """
-    Create a default admin user exactly once (no-op if present).
-    Env controls:
-      DEFAULT_ADMIN_EMAIL (default: ba3ai)
-      DEFAULT_ADMIN_PASSWORD (default: admin123)
-    """
+    """Create a default admin user exactly once (no-op if present)."""
     admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "ba3ai@elpiscapital.com")
     admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "Ba3aiAdmin123!")
 
     with app.app_context():
         try:
-            from backend.models import User  # your User model
+            from backend.models import User
         except Exception as e:
             print(f"⚠️ Seed skipped: cannot import User model: {e}")
             return
@@ -275,7 +260,7 @@ def _seed_default_admin(app: Flask) -> None:
             return
 
         if exists:
-            return  # already seeded
+            return
 
         try:
             admin = User(
@@ -299,7 +284,6 @@ def _seed_default_admin(app: Flask) -> None:
             db.session.add(admin)
             db.session.commit()
 
-            # optional settings row if available
             try:
                 from backend.models import AdminSettings
                 db.session.add(AdminSettings(admin_id=admin.id))
@@ -319,8 +303,7 @@ def _normalize_sqlite_uri(app: Flask) -> None:
     """
     uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
     if uri.startswith("sqlite:///"):
-        rel = uri[len("sqlite:///") :]
-        # nothing to do if already absolute
+        rel = uri[len("sqlite:///"):]
         if not os.path.isabs(rel):
             os.makedirs(app.instance_path, exist_ok=True)
             abs_path = os.path.join(app.instance_path, rel)
@@ -330,13 +313,28 @@ def _normalize_sqlite_uri(app: Flask) -> None:
             print(f"ℹ️  SQLite path -> {rel}")
 
 
+# ---------- NEW: pick a default workbook automatically ----------
+def _pick_latest_workbook(root: Path, patterns: Iterable[str] = (r"*.xlsx", r"*.xls", r"*.xlsm")) -> Optional[Path]:
+    """
+    Find the most recently modified workbook under root matching supported patterns.
+    Returns a Path or None if nothing is found.
+    """
+    candidates = []
+    for pat in patterns:
+        candidates += list(root.glob(pat))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
 # Optional: metrics one-shot on boot (env-gated, requires MS_GRAPH_BEARER)
 try:
-    # internal helpers from metrics_sync; safe to import and call inside same process
     from routes.metrics_sync import _resolve_workbook_for_user, _sync_one_month  # type: ignore
 except Exception:  # pragma: no cover
     _resolve_workbook_for_user = None  # type: ignore
     _sync_one_month = None  # type: ignore
+
 
 def _startup_sync(app: Flask) -> None:
     if not _to_bool("STARTUP_SYNC", "true"):
@@ -353,7 +351,7 @@ def _startup_sync(app: Flask) -> None:
     owner_id = int(os.getenv("OWNER_USER_ID", "1"))
     try:
         with app.app_context():
-            wb = _resolve_workbook_for_user(owner_id, sheet=None)  # latest connection + default sheet
+            wb = _resolve_workbook_for_user(owner_id, sheet=None)
             today = _dt.utcnow().date()
             res = _sync_one_month(wb, bearer, today.year, today.month)
             app.logger.info("Startup sync stored metrics for %s (as_of %s)", wb.sheet, res.get("as_of"))
@@ -372,7 +370,7 @@ def create_app() -> Flask:
     )
     app.config.from_object(Config)
 
-    # Normalize SQLite path (avoid multiple relative files) BEFORE init db
+    # Normalize SQLite path BEFORE init db
     _normalize_sqlite_uri(app)
 
     # Paths for uploads & default workbook
@@ -380,7 +378,25 @@ def create_app() -> Flask:
     uploads_dir = backend_dir / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     app.config["UPLOAD_ROOT"] = str(uploads_dir)
-    app.config.setdefault("DEFAULT_WORKBOOK_FILE", str(uploads_dir / "ElpisWorkbook.xlsm"))
+
+    # 1) Honor explicit env DEFAULT_WORKBOOK_FILE if it exists
+    env_workbook = os.getenv("DEFAULT_WORKBOOK_FILE", "").strip()
+    if env_workbook and Path(env_workbook).expanduser().is_file():
+        app.config["DEFAULT_WORKBOOK_FILE"] = str(Path(env_workbook).expanduser().resolve())
+        print(f"📒 Using workbook from env DEFAULT_WORKBOOK_FILE -> {app.config['DEFAULT_WORKBOOK_FILE']}")
+    else:
+        # 2) Otherwise try to select the latest uploaded workbook automatically
+        latest = _pick_latest_workbook(uploads_dir)
+        if latest and latest.is_file():
+            app.config["DEFAULT_WORKBOOK_FILE"] = str(latest.resolve())
+            print(f"📒 Using latest uploaded workbook -> {app.config['DEFAULT_WORKBOOK_FILE']}")
+        else:
+            # 3) Final fallback to your original default
+            fallback = uploads_dir / "ElpisWorkbook.xlsm"
+            app.config["DEFAULT_WORKBOOK_FILE"] = str(fallback)
+            print(f"📒 No uploaded workbook found; falling back to -> {fallback}")
+
+    # Default sheet (unchanged)
     app.config.setdefault("DEFAULT_WORKBOOK_SHEET", "Q4 Report")
 
     # Mail & other extensions
@@ -389,7 +405,7 @@ def create_app() -> Flask:
 
     # Initialize db/migrate/jwt once
     init_extensions(app)
-    # Auto-run migrations helper (if present)
+
     try:
         run_auto_migrations(app)
     except Exception:
@@ -410,39 +426,84 @@ def create_app() -> Flask:
         print(f"⚠️ Could not import models before bootstrap: {e}")
 
     # ---- Schema bootstrap sequence ----
-    _auto_db_bootstrap(app)        # 1) migrate if possible
-    _create_missing_tables(app)    # 2) create any tables not in migrations
-
-    # 3) dev-only safety for SQLite columns (idempotent; safe to run each boot)
+    _auto_db_bootstrap(app)
+    _create_missing_tables(app)
     _ensure_user_columns(app)
     _ensure_investor_columns(app)
-    _ensure_sp_connection_columns(app)   # ensures sp_connections.is_shared exists
+    _ensure_sp_connection_columns(app)
+    _seed_default_admin(app)
 
-    _seed_default_admin(app)       # 4) seed admin if absent
+    login_manager.init_app(app)
 
-    # Sessions (optional)
+    @login_manager.user_loader
+    def load_user(user_id: str):
+        try:
+            return User.query.get(int(user_id))
+        except Exception:
+            return None
+
+    app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+
+    # Cookies tuned for SPA + API on different origins (adjust to your setup)
+    # --- Cookie/session/CORS for local dev (HTTP) ---
+    app.config.update(
+        SECRET_KEY=os.environ.get("SECRET_KEY", "dev-secret"),           # required for sessions
+        SESSION_COOKIE_NAME="session",
+        SESSION_COOKIE_SAMESITE="Lax",        # Lax is perfect for same-origin dev
+        SESSION_COOKIE_SECURE=False,          # True only behind https
+    )
+
     try:
         Session(app)
     except Exception:
         pass
 
+    # ---- CSRF TOKEN EMISSION (no flask_wtf import) -------------------------
+    def _ensure_csrf_token() -> str:
+        """Create/return a per-session CSRF token and store it in the *same* key the guard uses."""
+        token = session.get("csrf_token")
+        if not token:
+            import secrets
+            token = secrets.token_urlsafe(32)
+            session["csrf_token"] = token
+        return token
+
+    @app.after_request
+    def _set_csrf_cookie(resp: Response):
+        """
+        Always expose the CSRF token as a readable cookie so the SPA can mirror it
+        into 'X-XSRF-TOKEN'. IMPORTANT: do not rotate it per-response.
+        """
+        try:
+            token = _ensure_csrf_token()
+            resp.set_cookie(
+                "XSRF-TOKEN",
+                token,
+                samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+                secure=app.config.get("SESSION_COOKIE_SECURE", False),
+                httponly=False,  # must be readable by JS
+                path="/",
+            )
+        except Exception:
+            pass
+        return resp
+    # -----------------------------------------------------------------------
+
+    # -----------------------------------------------------------------------
+
     # CORS
-    try:
-        CORS(
-            app,
-            supports_credentials=True,
-            resources={r"/*": {"origins": Config.CORS_ALLOWED_ORIGINS}},
-            expose_headers=["WWW-Authenticate", "Server-Authorization"],
-            allow_headers=["Content-Type", "Authorization", "X-Graph-Token", "X-Tenant-Id"],
-            methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        )
-    except Exception:
-        CORS(app, supports_credentials=True)
+    CORS(app, supports_credentials=True)
+
 
     # Health check
     @app.get("/health")
     def health():
-        return jsonify(status="ok", db_uri=app.config.get("SQLALCHEMY_DATABASE_URI"))
+        return jsonify(
+            status="ok",
+            db_uri=app.config.get("SQLALCHEMY_DATABASE_URI"),
+            workbook=app.config.get("DEFAULT_WORKBOOK_FILE"),
+            sheet=app.config.get("DEFAULT_WORKBOOK_SHEET"),
+        )
 
     # Register API blueprints (stable prefixes)
     app.register_blueprint(metrics_bp)  # defines its own prefix
@@ -461,16 +522,16 @@ def create_app() -> Flask:
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(contacts_bp)
     app.register_blueprint(market_bp)
-    app.register_blueprint(documents_bp)  # defines its own prefix
-    # Add QBO + metrics autosync + users blueprints
+    app.register_blueprint(documents_bp)
     app.register_blueprint(qbo_bp)
-    app.register_blueprint(metrics_sync_bp)    # exposes /api/metrics/sync endpoints
+    app.register_blueprint(metrics_sync_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(portfolio_bp)
-    # Start the SharePoint autosync scheduler (uses MS_GRAPH_BEARER if set)
     app.register_blueprint(investor_sync_bp)
     app.register_blueprint(statements_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(kb_bp)  # exposes /api/kb/upload
+
     try:
         with app.app_context():
             init_autosync(app)  # uses AUTOSYNC_SECONDS or defaults to 120
@@ -479,7 +540,10 @@ def create_app() -> Flask:
 
     # Optional: immediately store latest month on boot (env-gated)
     _startup_sync(app)
+
+    # Background jobs (statements, etc.)
     start_scheduler(app, dev_mode=False)
+
     # Static assets for SPA
     if dist_dir:
         @app.route("/assets/<path:fname>")
@@ -517,6 +581,8 @@ def create_app() -> Flask:
     print("\n=== Startup ===")
     print(f"Serving frontend from: {dist_dir if dist_dir else '(none — API only)'}")
     print(f"SQLALCHEMY_DATABASE_URI: {app.config.get('SQLALCHEMY_DATABASE_URI')}")
+    print(f"Workbook: {app.config.get('DEFAULT_WORKBOOK_FILE')}")
+    print(f"Sheet   : {app.config.get('DEFAULT_WORKBOOK_SHEET')}")
     for rule in app.url_map.iter_rules():
         print(f"{sorted(rule.methods)} -> {rule.rule}")
     print("===============\n")

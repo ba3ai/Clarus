@@ -1,4 +1,3 @@
-// frontend/src/pages/Documents.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom";
 
@@ -11,20 +10,13 @@ const API_FILES = "/api/files";
 const API_DOCS  = "/api/documents";
 
 /* ---- Helpers ---- */
-function cx(...xs){return xs.filter(Boolean).join(" ");}
+function cx(...xs){return xs.filter(Boolean).join(" "); }
 function toISO(d){ if(!d) return ""; const dt=d instanceof Date?d:new Date(d); return Number.isNaN(dt.getTime())? "" : dt.toLocaleDateString(); }
-function getStoredToken() {
-  if (typeof window === "undefined") return null;
-  const lsKeys = ["token","access_token","accessToken","jwt","jwt_token"];
-  for (const k of lsKeys) { const v = localStorage.getItem(k); if (v && v !== "undefined" && v !== "null") return v.replace(/^Bearer\s+/i, ""); }
-  const cookie = document.cookie || ""; const cookieKeys = ["access_token","accessToken","jwt","jwt_token"];
-  for (const ck of cookieKeys) { const m = cookie.match(new RegExp(`(?:^|; )${ck}=([^;]+)`)); if (m && m[1]) return decodeURIComponent(m[1]).replace(/^Bearer\s+/i, ""); }
-  return null;
-}
 function normalizeNodes(nodes = []) {
   const arr = Array.isArray(nodes) ? nodes : [];
   return arr.map(n => ({
-    id: n?.id, name: typeof n?.name === "string" ? n.name : String(n?.name ?? ""),
+    id: n?.id,
+    name: typeof n?.name === "string" ? n.name : String(n?.name ?? ""),
     type: n?.type || "file",
     dateUploaded: n?.dateUploaded ?? n?.created_at ?? n?.createdAt ?? null,
     children: Array.isArray(n?.children) ? normalizeNodes(n.children) : [],
@@ -80,7 +72,11 @@ function PortalMenu({ anchorRect, onClose, children }) {
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     window.addEventListener("mousedown", h);
-    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); window.removeEventListener("mousedown", h); };
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("mousedown", h);
+    };
   }, [anchorRect, onClose]);
   return ReactDOM.createPortal(
     <div
@@ -164,7 +160,7 @@ function FolderPicker({ visible, tree, scope, onLoadChildren, onCancel, onConfir
 }
 
 /* ---------- Preview Modal ---------- */
-function PreviewModal({ open, onClose, file, scope, fetchBlob, onDownload }) {
+function PreviewModal({ open, onClose, file, fetchBlob, onDownload }) {
   const [url, setUrl] = useState(null);
   const [mime, setMime] = useState("");
   const [loading, setLoading] = useState(false);
@@ -253,7 +249,7 @@ function PreviewModal({ open, onClose, file, scope, fetchBlob, onDownload }) {
  * - scope 'direct'  → uses /api/files (your current system)
  * - scope 'shared'  → uses /api/documents (admin-shared to this investor)
  */
-export default function Documnest(){
+export default function Documents(){
   const [scope, setScope] = useState('direct'); // 'direct' | 'shared'
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState('az');
@@ -275,18 +271,21 @@ export default function Documnest(){
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewNode, setPreviewNode] = useState(null);
 
-  const token = getStoredToken();
-  const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
-
   // ---------------- Files API (personal files) ----------------
   async function filesJSON(path, opts = {}){
-    const res = await fetch(`${API_FILES}${path}`, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers||{}), ...authHeaders } });
+    const res = await fetch(`${API_FILES}${path}`, {
+      ...opts,
+      headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
+      credentials: "include",
+    });
     if(res.status === 401){ setAuthError("You’re not signed in or your session expired. Please log in again."); throw new Error("Unauthorized"); }
     if(!res.ok){ let msg = `Request failed (${res.status})`; try { const j = await res.json(); msg = j?.message || j || msg; } catch {} throw new Error(msg); }
     const ct = res.headers.get("content-type") || ""; return ct.includes("application/json") ? res.json() : res.text();
   }
   async function filesBlob(path){
-    const res = await fetch(`${API_FILES}${path}`, { headers: { ...authHeaders } });
+    const res = await fetch(`${API_FILES}${path}`, {
+      credentials: "include",
+    });
     if(res.status === 401){ setAuthError("You’re not signed in or your session expired. Please log in again."); throw new Error("Unauthorized"); }
     if(!res.ok) throw new Error(`Request failed (${res.status})`);
     return res.blob();
@@ -294,13 +293,19 @@ export default function Documnest(){
 
   // ---------------- Documents API (admin-shared) ----------------
   async function docsJSON(path, opts = {}){
-    const res = await fetch(`${API_DOCS}${path}`, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers||{}), ...authHeaders } });
+    const res = await fetch(`${API_DOCS}${path}`, {
+      ...opts,
+      headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
+      credentials: "include",
+    });
     if(res.status === 401){ setAuthError("You’re not signed in or your session expired. Please log in again."); throw new Error("Unauthorized"); }
     if(!res.ok){ let msg = `Request failed (${res.status})`; try { const j = await res.json(); msg = j?.error || j?.message || msg; } catch {} throw new Error(msg); }
     return res.json();
   }
   async function docsBlob(path){
-    const res = await fetch(`${API_DOCS}${path}`, { headers: { ...authHeaders } });
+    const res = await fetch(`${API_DOCS}${path}`, {
+      credentials: "include",
+    });
     if(res.status === 401){ setAuthError("You’re not signed in or your session expired. Please log in again."); throw new Error("Unauthorized"); }
     if(!res.ok) throw new Error(`Request failed (${res.status})`);
     return res.blob();
@@ -386,7 +391,7 @@ export default function Documnest(){
     form.append("scope", "direct");
     if(parentId != null) form.append("parent_id", String(parentId));
     for(const f of Array.from(fileList)) form.append("files", f);
-    const res = await fetch(`${API_FILES}/upload`, { method:"POST", headers:{ ...authHeaders }, body: form });
+    const res = await fetch(`${API_FILES}/upload`, { method:"POST", body: form, credentials: "include" });
     if(!res.ok){ let msg = `Upload failed (${res.status})`; try { const j = await res.json(); msg = j?.message || msg; } catch {} throw new Error(msg); }
     if(parentId){ const kids = await loadChildren('direct', parentId); updateNodeChildren(parentId, kids); setExpanded(prev => new Set(prev).add(parentId)); }
     else { await loadTree('direct'); }
@@ -415,7 +420,7 @@ export default function Documnest(){
   async function handleDelete(node){
     if (scope === 'shared') return;
     if(!window.confirm(`Delete "${node.name}"? This cannot be undone.`)) return;
-    const res = await fetch(`${API_FILES}/node/${node.id}`, { method:"DELETE", headers:{ ...authHeaders } });
+    const res = await fetch(`${API_FILES}/node/${node.id}`, { method:"DELETE", credentials: "include" });
     if(!res.ok) throw new Error(`Delete failed (${res.status})`);
     const pid = node.parent_id || null;
     if(pid){ const kids = await loadChildren('direct', pid); updateNodeChildren(pid, kids); }
@@ -469,6 +474,9 @@ export default function Documnest(){
   }
 
   // Sorting & scoping
+  const [expandedState, setExpandedState] = useState(new Set());
+  useEffect(()=>{ setExpandedState(expanded); }, [expanded]);
+
   const visibleRows = useMemo(()=>{
     if (scope === 'shared') {
       const list = Array.isArray(treeShared) ? treeShared : [];
@@ -485,7 +493,7 @@ export default function Documnest(){
       return filtered;
     }
 
-    const list = flatten(treeDirect, expanded, 0);
+    const list = flatten(treeDirect, expandedState, 0);
     const getName = (n) => typeof n?.name === "string" ? n.name : String(n?.name ?? "");
     const q = query.trim().toLowerCase();
     let filtered = q ? list.filter(r => getName(r).toLowerCase().includes(q)) : list;
@@ -509,7 +517,7 @@ export default function Documnest(){
     else { filtered = filtered.filter(r => r.parent_id == null); }
 
     return filtered;
-  }, [scope, treeDirect, treeShared, expanded, query, sortMode, currentFolder]);
+  }, [scope, treeDirect, treeShared, expandedState, query, sortMode, currentFolder]);
 
   const counts = useMemo(()=>({
     direct: Array.isArray(treeDirect) ? treeDirect.length : 0,
@@ -532,6 +540,13 @@ export default function Documnest(){
           Shared Files <span className={cx('ml-2 rounded-full px-2 text-xs', scope==='shared'?'bg-sky-50 text-sky-700 ring-1 ring-sky-200':'bg-slate-100 text-slate-600')}>{counts.shared}</span>
         </button>
       </div>
+
+      {/* Auth banner (if any) */}
+      {authError && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {authError}
+        </div>
+      )}
 
       {/* Breadcrumb + Toolbar */}
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -762,7 +777,7 @@ export default function Documnest(){
           if(!node || !act) return;
           try{
             if(act === 'move') await handleMove(node, destId);
-            else await handleCopy(node, destId);
+            else if(act === 'copy') await handleCopy(node, destId);
           }catch(err){ alert(String(err?.message||err)); }
         }}
       />
@@ -772,8 +787,7 @@ export default function Documnest(){
         open={previewOpen}
         onClose={()=>{ setPreviewOpen(false); setPreviewNode(null); }}
         file={previewNode}
-        scope={scope}
-        fetchBlob={fetchPreviewBlob}
+        fetchBlob={(node)=>fetchPreviewBlob(node)}
         onDownload={(node)=>handleDownload(node).catch(err=>alert(String(err?.message||err)))}
       />
     </div>

@@ -3,12 +3,13 @@ from flask import Blueprint, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from backend.models import Record, User
 from backend.extensions import db
+from flask_login import login_required
 import pandas as pd
 
 investor_bp = Blueprint('investor', __name__)
 
 @investor_bp.route('/dashboard', methods=['GET'])
-@jwt_required()
+@login_required
 def get_dashboard():
     user_id = get_jwt_identity()  # This is just the user ID (str)
     claims = get_jwt()  # This contains user_type, email, etc.
@@ -46,7 +47,7 @@ EXCEL_FILE_PATH = "uploads/Elpis_-_CAS_v.08_-_2025_Q1_PCAP_1.xlsm"
 TARGET_SHEET = "bcas_q4_adj"  # adjust to match your sheet/tab name
 
 @investor_bp.route("/dashboard/q4_report", methods=["GET"])
-@jwt_required()
+@login_required
 def investor_q4_report():
     try:
         user_id = get_jwt_identity()

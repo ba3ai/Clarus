@@ -1,64 +1,56 @@
-// frontend/src/services/api.js
+// src/services/api.js
 import axios from "axios";
 
-const API_BASE_URL = "http://localhost:5001"; // keep as-is for dev
+const API_BASE_URL =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE) ||
+  window.location.origin;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: { "Content-Type": "application/json" },
+  withCredentials: true,
+
+  // Let Axios auto-read cookie → header for us
+  xsrfCookieName: "XSRF-TOKEN",   // cookie name your server sets
+  xsrfHeaderName: "X-XSRF-TOKEN", // primary header your server accepts
+  headers: { "X-Requested-With": "XMLHttpRequest" },
 });
 
-// Attach JWT on every request (support multiple common keys)
+// Helper to read cookie manually (for extra header aliases on multipart)
+function readXsrfCookie() {
+  const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+// Add XSRF header on non-GETs (keeps existing logic)
 api.interceptors.request.use((config) => {
-  const token =
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("accessToken") ||
-    sessionStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  const method = (config.method || "get").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    const xsrf = readXsrfCookie();
+    if (xsrf) {
+      config.headers["X-XSRF-TOKEN"] = xsrf;  // primary
+      // add common aliases in case the backend checks a different name
+      config.headers["X-CSRFToken"] = xsrf;
+      config.headers["X-CSRF-Token"] = xsrf;
+    }
+  }
   return config;
 });
 
-// Handle 401 by refreshing with the correct backend route
-api.interceptors.response.use(
-  (res) => res,
-  async (error) => {
-    const original = error.config;
-    if (error.response?.status === 401 && !original._retry) {
-      const refreshToken =
-        localStorage.getItem("refreshToken") ||
-        localStorage.getItem("refresh") ||
-        sessionStorage.getItem("refreshToken") ||
-        sessionStorage.getItem("refresh");
-      if (!refreshToken) return Promise.reject(error);
+// Multipart helper for file uploads
+export async function uploadFile(url, file, fields = {}) {
+  const form = new FormData();
+  Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+  form.append("file", file);
 
-      original._retry = true;
-      try {
-        // NOTE: Backend route is /auth/refresh (not /refresh)
-        const { data } = await axios.post(
-          `${API_BASE_URL}/auth/refresh`,
-          {},
-          { headers: { Authorization: `Bearer ${refreshToken}` } }
-        );
-
-        const newAccess = data?.access_token || data?.accessToken;
-        if (!newAccess) throw new Error("No access token in refresh response");
-
-        localStorage.setItem("accessToken", newAccess);
-        api.defaults.headers.common.Authorization = `Bearer ${newAccess}`;
-        original.headers.Authorization = `Bearer ${newAccess}`;
-        return api(original);
-      } catch (e) {
-        // wipe tokens and surface the error
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-        localStorage.removeItem("token");
-        localStorage.removeItem("refresh");
-        return Promise.reject(e);
-      }
-    }
-    return Promise.reject(error);
+  const xsrf = readXsrfCookie();
+  const headers = {};
+  if (xsrf) {
+    headers["X-XSRF-TOKEN"] = xsrf;
+    headers["X-CSRFToken"] = xsrf;
+    headers["X-CSRF-Token"] = xsrf;
   }
-);
+  // Do NOT set Content-Type—Axios will set the correct multipart boundary
+  return api.post(url, form, { headers });
+}
 
 export default api;

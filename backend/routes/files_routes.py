@@ -8,6 +8,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from flask import Blueprint, current_app, jsonify, request, send_file, abort, url_for
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
+from flask_login import login_required
 
 from backend.extensions import db
 from backend.models import FileNode
@@ -111,7 +112,7 @@ def _validate_sig(base_url_no_query: str, exp: int, sig: str) -> bool:
 # ---------- routes ----------
 
 @files_bp.get("/tree")
-@jwt_required()
+@login_required
 def list_tree():
     """Return the full tree for the chosen scope (root level)."""
     scope = request.args.get("scope", "direct")
@@ -122,7 +123,7 @@ def list_tree():
     return jsonify([r.to_dict() for r in roots])
 
 @files_bp.post("/folder")
-@jwt_required()
+@login_required
 def create_folder():
     data = request.get_json(force=True) or {}
     scope = data.get("scope", "direct")
@@ -153,7 +154,7 @@ def create_folder():
     return jsonify(node.to_dict()), 201
 
 @files_bp.post("/upload")
-@jwt_required()
+@login_required
 def upload():
     scope = request.form.get("scope", "direct")
     _check_scope(scope)
@@ -192,7 +193,7 @@ def upload():
     return jsonify([n.to_dict() for n in created]), 201
 
 @files_bp.post("/rename")
-@jwt_required()
+@login_required
 def rename():
     data = request.get_json(force=True)
     node_id = int(data["id"])
@@ -211,7 +212,7 @@ def rename():
     return jsonify(node.to_dict())
 
 @files_bp.delete("/node/<int:node_id>")
-@jwt_required()
+@login_required
 def delete_node(node_id):
     uid = _current_user_id()
     node = FileNode.query.get_or_404(node_id)
@@ -231,7 +232,7 @@ def delete_node(node_id):
     return "", 204
 
 @files_bp.post("/permissions")
-@jwt_required()
+@login_required
 def update_permissions():
     data = request.get_json(force=True)
     node_id = int(data["id"])
@@ -247,7 +248,7 @@ def update_permissions():
     return jsonify(node.to_dict())
 
 @files_bp.get("/download/<int:node_id>")
-@jwt_required()
+@login_required
 def download(node_id):
     uid = _current_user_id()
     node = FileNode.query.get_or_404(node_id)
@@ -275,7 +276,7 @@ def download(node_id):
     return send_file(mem, as_attachment=True, download_name=f"{node.name}.zip", mimetype="application/zip")
 
 @files_bp.get("/download-all")
-@jwt_required()
+@login_required
 def download_all():
     scope = request.args.get("scope", "direct")
     _check_scope(scope)
@@ -296,7 +297,7 @@ def download_all():
 # NEW: Signed preview URL + public inline download
 # ─────────────────────────────────────────────────────────────
 @files_bp.get("/preview-url/<int:node_id>")
-@jwt_required()
+@login_required
 def preview_url(node_id: int):
     """
     Returns a short-lived public URL for this file.
@@ -342,7 +343,7 @@ def public_download_file(node_id: int):
 
 
 @files_bp.get("/children")
-@jwt_required()
+@login_required
 def list_children():
     """Return children for a folder (or root when no parent_id)."""
     scope = request.args.get("scope", "direct")
@@ -354,7 +355,7 @@ def list_children():
     return jsonify([r.to_dict() for r in rows])
 
 @files_bp.post("/move")
-@jwt_required()
+@login_required
 def move_node():
     """Move a file/folder into another folder (or to root)."""
     data = request.get_json(force=True) or {}
@@ -400,7 +401,7 @@ def move_node():
     return jsonify(node.to_dict())
 
 @files_bp.post("/copy")
-@jwt_required()
+@login_required
 def copy_node():
     """Copy a file/folder into another folder (or to root)."""
     data = request.get_json(force=True) or {}

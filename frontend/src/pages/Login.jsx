@@ -1,12 +1,15 @@
 // src/pages/Login.jsx
 import React, { useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
 import { AuthContext } from "../context/AuthContext";
+import { loginUser, getMe } from "../services/authService";
 
-// Use env for backend base URL (create .env with VITE_API_BASE=http://127.0.0.1:5001)
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
-
+/**
+ * Cookie-session login:
+ * 1) POST /auth/login  (server sets session + XSRF cookie)
+ * 2) GET  /auth/me     (read current user + mapped investor)
+ * No tokens in localStorage; all requests use withCredentials + CSRF via api.js
+ */
 export default function Login() {
   const navigate = useNavigate();
   const { setUser } = useContext(AuthContext);
@@ -22,51 +25,36 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: emailOrUsername, password }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.msg || `${res.status} ${res.statusText}`);
-
-      // Accept either snake_case or camelCase
-      const access =
-        data.access_token || data.accessToken || data.token || data.jwt;
-      const refresh = data.refresh_token || data.refreshToken;
-
-      if (!access) throw new Error("Missing access token in response.");
-
-      // Persist tokens
-      localStorage.setItem("accessToken", access);
-      if (refresh) localStorage.setItem("refreshToken", refresh);
-
-      // Decode and push into AuthContext
-      let decoded;
-      try {
-        decoded = jwtDecode(access);
-      } catch {
-        throw new Error("Invalid access token.");
+      // 1) Login (sets session cookie)
+      const res = await loginUser(emailOrUsername, password);
+      if (!res?.success) {
+        throw new Error(res?.message || "Invalid email/username or password");
       }
 
-      const nextUser = {
-        id: decoded.sub || decoded.user_id || null,
-        email: decoded.email || emailOrUsername,
-        user_type: (decoded.user_type || "").toLowerCase(), // admin | groupadmin | investor
-        full_name: decoded.full_name || null,
-        permission: decoded.permission || null,
-        token: access,
-      };
-      setUser(nextUser);
+      // 2) Fetch current user/investor from the session
+      const me = await getMe();
+      if (!me?.ok || !me?.user) {
+        throw new Error("Unable to load your profile after login.");
+      }
 
-      // Route by role
-      if (nextUser.user_type === "admin") navigate("/admin-dashboard");
-      else if (nextUser.user_type === "groupadmin") navigate("/group-admin-dashboard");
-      else if (nextUser.user_type === "investor") navigate("/investor-dashboard");
+      // Put into your AuthContext (shape compatible with the rest of the app)
+      const u = me.user;
+      setUser({
+        id: u.id,
+        email: u.email,
+        user_type: (u.user_type || "").toLowerCase(),
+        full_name: u.name || [u.first_name, u.last_name].filter(Boolean).join(" ") || null,
+        permission: u.permission || null,
+      });
+
+      // Route by role (same behavior you had before)
+      const role = (u.user_type || "").toLowerCase();
+      if (role === "admin") navigate("/admin-dashboard");
+      else if (role === "groupadmin") navigate("/group-admin-dashboard");
+      else if (role === "investor") navigate("/investor-dashboard");
       else throw new Error("Unauthorized user role.");
     } catch (err) {
-      setStatus(err.message || "Invalid email/username or password");
+      setStatus(err.message || "Login failed");
     } finally {
       setLoading(false);
     }

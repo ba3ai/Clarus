@@ -12,6 +12,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from intuitlib.client import AuthClient
 from intuitlib.enums import Scopes
+from flask_login import login_required
 
 from backend.models import (
     db,
@@ -83,7 +84,7 @@ def _qbo_base(conn: QuickBooksConnection) -> str:
 # ======================================================================================
 
 @qbo_bp.get("/connect")
-@jwt_required()
+@login_required
 def connect():
     auth_client = _make_auth_client()
     url = auth_client.get_authorization_url(_scopes())
@@ -125,7 +126,7 @@ def callback():
     return redirect("/settings/integrations?qbo=connected")
 
 @qbo_bp.get("/customers")
-@jwt_required()
+@login_required
 def customers():
     user_id = get_jwt_identity()
     q = QuickBooksConnection.query.filter_by(user_id=user_id).order_by(QuickBooksConnection.updated_at.desc())
@@ -149,7 +150,7 @@ def customers():
     return jsonify(out), r.status_code
 
 @qbo_bp.post("/disconnect")
-@jwt_required()
+@login_required
 def disconnect():
     user_id = get_jwt_identity()
     realm_id = (request.json or {}).get("realmId")
@@ -306,7 +307,7 @@ def _upsert_entity(realm_id: str, entity: str, obj: dict) -> None:
     db.session.add(row)
 
 @qbo_bp.post("/full-sync")
-@jwt_required()
+@login_required
 def full_sync():
     """
     Body example:
@@ -385,7 +386,7 @@ def full_sync():
 # ======================================================================================
 
 @qbo_bp.get("/entities")
-@jwt_required()
+@login_required
 def list_entities():
     """
     /api/qbo/entities?entity_type=Invoice&from=2025-01&to=2025-06&realmId=...&q=abc&page=1&limit=100
@@ -437,7 +438,7 @@ def list_entities():
 # ======================================================================================
 
 @qbo_bp.post("/periods/sync")
-@jwt_required()
+@login_required
 def periods_sync():
     def parse_month(s: str) -> date:
         s = (s or "").strip()
