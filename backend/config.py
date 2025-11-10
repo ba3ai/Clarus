@@ -1,5 +1,5 @@
 from datetime import timedelta
-import os
+import os,pathlib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,7 +8,7 @@ class Config:
     # ── DB / JWT (keep your existing ones) ─────────────────────────────────────
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URI", "postgresql+psycopg://postgres:password@localhost:5432/financial_db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-
+    pathlib.Path("/home/site/data").mkdir(parents=True, exist_ok=True)
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key")
     JWT_TOKEN_LOCATION = ["headers"]
     JWT_HEADER_TYPE = "Bearer"
