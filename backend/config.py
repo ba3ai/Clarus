@@ -25,7 +25,7 @@ class Config:
     AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
 
     # 🔑 Authorization Code redirect (must match App Registration)
-    AZURE_REDIRECT_URI  = os.getenv("AZURE_REDIRECT_URI", "http://localhost:5001/auth/ms/callback")
+    AZURE_REDIRECT_URI  = os.getenv("AZURE_REDIRECT_URI", "https://clarus.azurewebsites.net/auth/ms/callback")
 
     # Delegated scopes (explicit for user consent)
     GRAPH_SCOPES        = os.getenv(

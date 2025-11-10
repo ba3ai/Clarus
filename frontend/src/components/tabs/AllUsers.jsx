@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 const ITEMS_PER_PAGE = 10;
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://clarus.azurewebsites.net";
 
 export default function AllUsers() {
   const [users, setUsers] = useState([]);
